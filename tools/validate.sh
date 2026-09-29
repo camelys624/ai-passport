@@ -61,11 +61,19 @@ run_static_checks() {
             -o "${test_dir}/test_demo_${demo}_runtime"
         "${test_dir}/test_demo_${demo}_runtime"
     done
+    "${CC:-cc}" -std=c11 -Wall -Wextra -Werror -Imain \
+        tests/test_fish_game.c main/fish_game.c main/fish_catalog.c main/fish_save.c \
+        -o "${test_dir}/test_fish_game"
+    "${test_dir}/test_fish_game"
+    "${CC:-cc}" -std=c11 -Wall -Wextra -Werror -Imain \
+        tests/test_fish_sound.c main/fish_sound.c -lm -o "${test_dir}/test_fish_sound"
+    "${test_dir}/test_fish_sound"
     PYTHONDONTWRITEBYTECODE=1 python3 tests/test_deep_sleep_contract.py
     PYTHONDONTWRITEBYTECODE=1 python3 tests/test_check_repo.py
     PYTHONDONTWRITEBYTECODE=1 python3 tests/test_verify_firmware.py
     PYTHONDONTWRITEBYTECODE=1 python3 tests/test_archive_firmware.py
     PYTHONDONTWRITEBYTECODE=1 python3 tests/test_install_passport_skills.py
+    PYTHONDONTWRITEBYTECODE=1 python3 tests/test_fish_fonts.py
     rm -rf "${test_dir}"
     echo "Host tests: PASS"
 }
