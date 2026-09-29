@@ -46,7 +46,7 @@ const fish_entry_t FISH_ENTRIES[FISH_ENTRY_COUNT] = {
      .reel_steps = 4, .price = 10, .weight = {6, 4, 6, 6, 4}},
     {.name = "宝箱", .desc = "锈迹斑斑，\n里面是几枚旧铜钱。",
      .kind = FISH_KIND_JUNK, .rarity = FISH_RARITY_RARE,
-     .reel_steps = 5, .price = 50, .weight = {1, 0, 5, 4, 12}},
+     .reel_steps = 5, .price = 100, .weight = {1, 0, 5, 4, 12}},
 };
 
 _Static_assert(FISH_ENTRY_COUNT <= FISH_ENTRY_MAX, "存档格式最多记录 FISH_ENTRY_MAX 种渔获");

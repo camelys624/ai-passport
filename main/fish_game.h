@@ -41,7 +41,7 @@
 #define FG_RESULT_GUARD_MS 600U
 #define FG_REEL_GRACE_MS 400U  // 收线开始后这段时间内多按的 OK 不算按错（提竿常连按两下）
 #define FG_NO_DEADLINE UINT32_MAX
-#define FG_DAILY_POINTS 100U
+#define FG_DAILY_POINTS 200U
 #define FG_DAY_MS 86400000U
 
 typedef enum {
