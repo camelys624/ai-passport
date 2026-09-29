@@ -15,6 +15,46 @@
 - 添加字库前评估 Flash 与内部 RAM 影响；ESP32-C3 无 PSRAM。
 - 不提交许可不允许分发的字库。
 
+### Codeloom 思源黑体（Noto Sans SC）子集
+
+供 [Codeloom 审批器](../docs/reference/camelys624/codeloom/README.zh_CN.md) 固件使用
+（由 `main/CMakeLists.txt` 编译；`main/codeloom_fonts.c` 选用，并以 Montserrat 作为
+`LV_SYMBOL_*` 图标的回退字体）。
+
+| 文件 | 字号 / bpp | 源字重 | 覆盖范围 | Flash（.rodata） |
+| --- | --- | --- | --- | ---: |
+| [`fonts/codeloom_font_14.c`](fonts/codeloom_font_14.c) | 14 px / 4 | Regular | ASCII、标点、全部界面文字 | 35,940 B |
+| [`fonts/codeloom_font_16.c`](fonts/codeloom_font_16.c) | 16 px / 4 | Regular | ASCII、标点、界面文字、全部 3755 个 GB2312 一级汉字 | 496,286 B |
+| [`fonts/codeloom_font_22.c`](fonts/codeloom_font_22.c) | 22 px / 4 | Medium | ASCII、标点、全部界面文字 | 78,052 B |
+
+- 来源：Noto Sans SC 2.004，`Sans/SubsetOTF/SC/NotoSansSC-Regular.otf`（SHA-256
+  `faa6c9df652116dde789d351359f3d7e5d2285a2b2a1f04a2d7244df706d5ea9`）和
+  `NotoSansSC-Medium.otf`（SHA-256
+  `7633f5a016d4dd95e685a69633d818aabc4644c4b08e26bd35b1b30c45ed5dda`），取自
+  <https://github.com/notofonts/noto-cjk/tree/Sans2.004>（commit
+  `523d033d6cb47f4a80c58a35753646f5c3608a78`）。OTF 文件不提交到仓库。
+- 许可：SIL Open Font License 1.1，全文见 [`fonts/NotoSansSC-OFL.txt`](fonts/NotoSansSC-OFL.txt)。
+  生成的位图属于修改版本，使用自己的名称（未使用保留字体名）。
+- 字符表：[`tools/gen_codeloom_fonts.py`](../tools/gen_codeloom_fonts.py) 收集
+  `main/codeloom_*.c/.h` 字符串字面量中的全部码点，加入可打印 ASCII 和一组固定的中文/全角
+  标点（以及用于替换不支持动态字符的 U+25A1 方框）；16 px 另加 GB2312 一级汉字。脚本同时
+  生成供开机字形自检使用的 `main/codeloom_ui_charset.h`。
+- 转换器：通过 `npx` 使用 `lv_font_conv` 1.5.3，输出与 LVGL 9.5.0 兼容。修改任何界面文字后重新生成：
+
+  ```bash
+  mkdir -p ~/.cache/codeloom-fonts && cd ~/.cache/codeloom-fonts
+  base=https://raw.githubusercontent.com/notofonts/noto-cjk/523d033d6cb47f4a80c58a35753646f5c3608a78
+  curl -fLO "$base/Sans/SubsetOTF/SC/NotoSansSC-Regular.otf"
+  curl -fLO "$base/Sans/SubsetOTF/SC/NotoSansSC-Medium.otf"
+  cd - && python3 tools/gen_codeloom_fonts.py --font-dir ~/.cache/codeloom-fonts
+  ```
+
+  每个字号执行 `npx -y lv_font_conv@1.5.3 --font <otf> -r 0x20-0x7E --symbols <字符表>
+  --size <px> --bpp 4 --format lvgl --no-compress --lv-font-name codeloom_font_<px>
+  --lv-include lvgl.h -o assets/fonts/codeloom_font_<px>.c`。
+- 验证：`tests/test_codeloom_fonts.py`（属于 `./tools/validate.sh --static`）解析生成字体的
+  cmap，缺少任何界面文字、标点或 GB2312 一级汉字都会失败；U+9F98 作为已知缺失的反例。
+
 ## 图片（images）
 
 可复用的源图与生成的显示资产放在 `images/`。

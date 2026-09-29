@@ -56,6 +56,12 @@ The engineering rules themselves live under
 
 - [Offline Pokédex](sunny0826/offline-pokedex/README.md) — a fully offline Pokédex that embeds all 1,025 Pokémon, their sprites, and cries in the firmware.
 
+### camelys624
+
+**Application playbooks:**
+
+- [Codeloom Approver](camelys624/codeloom/README.md) — a Wi-Fi companion for a Codeloom workspace that shows pending agent approvals and tasks and lets you allow or deny requests with the buttons.
+
 ## Adding an experience entry
 
 Each release may produce **one or more** reusable, post-release learnings; each is

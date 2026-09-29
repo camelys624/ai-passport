@@ -1,0 +1,5 @@
+cJSON 1.7.19 (DaveGamble/cJSON commit c859b25da02955fef659d658b8f324b5cde87be3),
+copied unmodified from the ESP-IDF v5.5.3 components/json/cJSON submodule so that
+the Codeloom parser host tests (tools/validate.sh --static) use the same parser as
+the firmware without requiring an ESP-IDF checkout. MIT license: see LICENSE.
+Firmware builds use ESP-IDF's own json component, not this copy.

@@ -8,6 +8,36 @@ usage() {
     echo "Usage: $0 [--all|--static|--firmware]" >&2
 }
 
+# Codeloom application logic: pure C modules from main/ (no ESP-IDF/LVGL). The
+# overview/pairing parser links the cJSON release vendored for host tests at the
+# same commit ESP-IDF 5.5.3 ships (tests/third_party/cjson/).
+run_codeloom_host_tests() {
+    local out="$1"
+    local cc_flags=(-std=c11 -Wall -Wextra -Werror -Imain -Itests/third_party/cjson)
+    local cjson=tests/third_party/cjson/cJSON.c
+
+    "${CC:-cc}" "${cc_flags[@]}" tests/test_codeloom_text.c main/codeloom_text.c \
+        -o "${out}/test_codeloom_text"
+    "${out}/test_codeloom_text"
+    "${CC:-cc}" "${cc_flags[@]}" tests/test_codeloom_url_form.c main/codeloom_url.c \
+        main/codeloom_setup_form.c main/codeloom_text.c -o "${out}/test_codeloom_url_form"
+    "${out}/test_codeloom_url_form"
+    "${CC:-cc}" "${cc_flags[@]}" tests/test_codeloom_protocol.c main/codeloom_protocol.c \
+        main/codeloom_text.c main/codeloom_url.c "${cjson}" -lm \
+        -o "${out}/test_codeloom_protocol"
+    "${out}/test_codeloom_protocol"
+    "${CC:-cc}" "${cc_flags[@]}" tests/test_codeloom_settings.c main/codeloom_settings.c \
+        main/codeloom_protocol.c main/codeloom_setup_form.c main/codeloom_text.c \
+        main/codeloom_url.c "${cjson}" -lm -o "${out}/test_codeloom_settings"
+    "${out}/test_codeloom_settings"
+    "${CC:-cc}" "${cc_flags[@]}" tests/test_codeloom_state.c main/codeloom_state.c \
+        -o "${out}/test_codeloom_state"
+    "${out}/test_codeloom_state"
+    "${CC:-cc}" "${cc_flags[@]}" tests/test_codeloom_timing.c main/codeloom_timing.c \
+        main/codeloom_chime.c -lm -o "${out}/test_codeloom_timing"
+    "${out}/test_codeloom_timing"
+}
+
 run_static_checks() {
     local actionlint_bin
     local test_dir
@@ -61,11 +91,13 @@ run_static_checks() {
             -o "${test_dir}/test_demo_${demo}_runtime"
         "${test_dir}/test_demo_${demo}_runtime"
     done
+    run_codeloom_host_tests "${test_dir}"
     PYTHONDONTWRITEBYTECODE=1 python3 tests/test_deep_sleep_contract.py
     PYTHONDONTWRITEBYTECODE=1 python3 tests/test_check_repo.py
     PYTHONDONTWRITEBYTECODE=1 python3 tests/test_verify_firmware.py
     PYTHONDONTWRITEBYTECODE=1 python3 tests/test_archive_firmware.py
     PYTHONDONTWRITEBYTECODE=1 python3 tests/test_install_passport_skills.py
+    PYTHONDONTWRITEBYTECODE=1 python3 tests/test_codeloom_fonts.py
     rm -rf "${test_dir}"
     echo "Host tests: PASS"
 }
