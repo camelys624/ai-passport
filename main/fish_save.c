@@ -1,6 +1,8 @@
 // main/fish_save.c — 见 fish_save.h。
 #include "fish_save.h"
 
+#include <string.h>
+
 static void put_u16(uint8_t *p, uint16_t v)
 {
     p[0] = (uint8_t)v;
@@ -36,7 +38,9 @@ void fish_save_encode(const fg_progress_t *progress, uint8_t out[FISH_SAVE_SIZE]
         put_u16(out + 12 + 2 * i, progress->counts[i]);
     }
     put_u32(out + FISH_SAVE_V1_SIZE, progress->points);
-    put_u32(out + FISH_SAVE_V1_SIZE + 4, progress->day_ms);
+    for (unsigned i = 0; i < FISH_ENTRY_MAX; ++i) {
+        put_u16(out + FISH_SAVE_V1_SIZE + 4 + 2 * i, progress->stock[i]);
+    }
 }
 
 bool fish_save_decode(const uint8_t *data, size_t length, fg_progress_t *out)
@@ -56,10 +60,12 @@ bool fish_save_decode(const uint8_t *data, size_t length, fg_progress_t *out)
     }
     if (data[2] == 1U) {
         out->points = FG_DAILY_POINTS;
-        out->day_ms = 0;
+        memset(out->stock, 0, sizeof(out->stock));
     } else {
         out->points = get_u32(data + FISH_SAVE_V1_SIZE);
-        out->day_ms = get_u32(data + FISH_SAVE_V1_SIZE + 4);
+        for (unsigned i = 0; i < FISH_ENTRY_MAX; ++i) {
+            out->stock[i] = get_u16(data + FISH_SAVE_V1_SIZE + 4 + 2 * i);
+        }
     }
     return true;
 }

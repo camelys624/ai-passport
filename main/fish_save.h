@@ -1,9 +1,9 @@
 // main/fish_save.h — 进度存档的二进制编码（纯 C，主机可测）。
 //
 // 布局（小端）：'F' 'S' 版本(1) 饵料(1) 抛竿次数(u32) 跑鱼次数(u32) 渔获数量(u16 × FISH_ENTRY_MAX)
-//              积分(u32) 日计时(u32)
+//              积分(u32) 鱼篓数量(u16 × FISH_ENTRY_MAX)
 // 渔获数量按 FISH_ENTRIES 下标存放；预留到 FISH_ENTRY_MAX，追加渔获不需要改格式。
-// 版本 1 没有末尾两项：读入时积分记为 FG_DAILY_POINTS、日计时从 0 开始。
+// 版本 1 没有末尾两项：读入时积分记为 FG_DAILY_POINTS、鱼篓为空。
 #pragma once
 
 #include <stdbool.h>
@@ -14,7 +14,7 @@
 
 #define FISH_SAVE_VERSION 2U
 #define FISH_SAVE_V1_SIZE (2U + 1U + 1U + 4U + 4U + 2U * FISH_ENTRY_MAX)
-#define FISH_SAVE_SIZE (FISH_SAVE_V1_SIZE + 4U + 4U)
+#define FISH_SAVE_SIZE (FISH_SAVE_V1_SIZE + 4U + 2U * FISH_ENTRY_MAX)
 
 void fish_save_encode(const fg_progress_t *progress, uint8_t out[FISH_SAVE_SIZE]);
 

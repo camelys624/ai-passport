@@ -7,7 +7,7 @@
 //   像素图：tools/gen_fish_sprites.py 按 name 查找画法（CATCH_ART / BAIT_ART），
 //           新名字没有对应画法时构建失败。
 // 概率 = 该项在当前饵料下的权重 / 当前饵料下所有项的权重之和；权重 0 = 这种饵料钓不到它。
-// 积分：抛竿时扣除饵料的 cost；钓到渔获时加上它的 points（水草、旧靴子为 0）。
+// 积分：抛竿时扣除饵料的 cost；渔获在鱼册里按 price 卖出换积分（水草、旧靴子为 0，不能卖）。
 // desc 显示在 176 px 宽的卡片里，16 px 字每行最多 11 个汉字：用 "\n" 手动断成两行，
 // 避免标点被挤到单独一行。新增的文字需要重新运行 tools/gen_fish_fonts.py。
 #pragma once
@@ -43,7 +43,7 @@ typedef struct {
     uint8_t kind;          // fish_kind_t
     uint8_t rarity;        // fish_rarity_t
     uint8_t reel_steps;    // 收线提示步数，越稀有越多
-    uint16_t points;       // 钓到后换得的积分
+    uint16_t price;        // 在鱼册卖出一条换得的积分；0 = 不能卖
     uint16_t weight[FISH_BAIT_COUNT];
 } fish_entry_t;
 

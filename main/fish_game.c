@@ -98,7 +98,7 @@ void fish_game_init(fish_game_t *game, const fg_progress_t *saved, uint32_t seed
     game->view = FG_VIEW_READY;
     game->screen_on = true;
     game->last_activity_ms = now_ms;
-    game->clock_ms = now_ms;
+    game->next_grant_ms = now_ms + FG_DAY_MS;
 }
 
 static uint32_t enter(fish_game_t *game, fg_view_t view)
@@ -106,7 +106,13 @@ static uint32_t enter(fish_game_t *game, fg_view_t view)
     game->view = view;
     game->armed = 0;
     game->short_points = false;
+    game->sell_qty = 0;
     return FG_FX_REDRAW;
+}
+
+static void add_points(fg_progress_t *p, uint32_t points)
+{
+    p->points = p->points > UINT32_MAX - points ? UINT32_MAX : p->points + points;
 }
 
 static uint32_t finish(fish_game_t *game, fg_outcome_t outcome, uint32_t now_ms)
@@ -115,12 +121,14 @@ static uint32_t finish(fish_game_t *game, fg_outcome_t outcome, uint32_t now_ms)
     game->result_ms = now_ms;
     if (outcome == FG_OUTCOME_CAUGHT) {
         uint16_t *count = &game->progress.counts[game->entry];
-        uint32_t points = FISH_ENTRIES[game->entry].points;
+        uint16_t *stock = &game->progress.stock[game->entry];
         if (*count < UINT16_MAX) {
             ++*count;
         }
-        game->progress.points = game->progress.points > UINT32_MAX - points ? UINT32_MAX
-                                                                             : game->progress.points + points;
+        // 能卖钱的渔获放进鱼篓，到鱼册里卖；水草、旧靴子只记入鱼册。
+        if (FISH_ENTRIES[game->entry].price > 0 && *stock < UINT16_MAX) {
+            ++*stock;
+        }
         return enter(game, FG_VIEW_RESULT) | FG_FX_SOUND_CATCH | FG_FX_SAVE;
     }
     if (game->progress.escapes < UINT32_MAX) {
@@ -208,18 +216,46 @@ static uint32_t on_press(fish_game_t *game, fg_key_t key, uint32_t now_ms)
         }
         return key == FG_KEY_OK ? enter(game, FG_VIEW_READY) : 0;
     case FG_VIEW_ALBUM:
+        if (key == FG_KEY_OK) {
+            return 0; // OK 的单击卖鱼、长按退出，都等 CLICK/LONG
+        }
+        if (game->sell_qty > 0) {
+            // 选卖出数量：▲ 加、▼ 减，在 1..持有数之间循环。
+            uint16_t stock = game->progress.stock[game->album_index];
+            if (key == FG_KEY_UP) {
+                game->sell_qty = game->sell_qty >= stock ? 1 : (uint16_t)(game->sell_qty + 1U);
+            } else {
+                game->sell_qty = game->sell_qty <= 1 ? stock : (uint16_t)(game->sell_qty - 1U);
+            }
+            return FG_FX_UPDATE;
+        }
         if (key == FG_KEY_UP) {
             game->album_index = (uint8_t)((game->album_index + FISH_ENTRY_COUNT - 1U) % FISH_ENTRY_COUNT);
-            return FG_FX_UPDATE;
-        }
-        if (key == FG_KEY_DOWN) {
+        } else {
             game->album_index = (uint8_t)((game->album_index + 1U) % FISH_ENTRY_COUNT);
-            return FG_FX_UPDATE;
         }
-        return enter(game, FG_VIEW_READY);
+        return FG_FX_UPDATE;
     default:
         return 0;
     }
+}
+
+static uint32_t album_click(fish_game_t *game)
+{
+    uint8_t i = game->album_index;
+    uint16_t stock = game->progress.stock[i];
+
+    if (game->sell_qty == 0) {
+        if (stock == 0 || FISH_ENTRIES[i].price == 0) {
+            return 0;
+        }
+        game->sell_qty = 1;
+        return FG_FX_UPDATE;
+    }
+    game->progress.stock[i] = (uint16_t)(stock - game->sell_qty);
+    add_points(&game->progress, (uint32_t)game->sell_qty * FISH_ENTRIES[i].price);
+    game->sell_qty = 0;
+    return FG_FX_UPDATE | FG_FX_SAVE | FG_FX_SOUND_CATCH;
 }
 
 static uint32_t on_click(fish_game_t *game, fg_key_t key, uint32_t now_ms)
@@ -227,7 +263,14 @@ static uint32_t on_click(fish_game_t *game, fg_key_t key, uint32_t now_ms)
     if (key != FG_KEY_OK) {
         return 0;
     }
-    return game->view == FG_VIEW_READY ? cast(game, now_ms) : 0;
+    switch (game->view) {
+    case FG_VIEW_READY:
+        return cast(game, now_ms);
+    case FG_VIEW_ALBUM:
+        return album_click(game);
+    default:
+        return 0;
+    }
 }
 
 static uint32_t on_long(fish_game_t *game, fg_key_t key)
@@ -242,7 +285,13 @@ static uint32_t on_long(fish_game_t *game, fg_key_t key)
     case FG_VIEW_WAITING:
         // 收竿：饵料已消耗，不退积分；抛竿时已保存。
         return enter(game, FG_VIEW_READY);
-    // 鱼册里按下 OK 就已返回准备页，长按事件到达时不再属于鱼册。
+    case FG_VIEW_ALBUM:
+        // 选数量时长按取消卖出，否则退出鱼册。
+        if (game->sell_qty > 0) {
+            game->sell_qty = 0;
+            return FG_FX_UPDATE;
+        }
+        return enter(game, FG_VIEW_READY);
     default:
         return 0;
     }
@@ -286,21 +335,14 @@ static uint32_t dim_limit(const fish_game_t *game)
     }
 }
 
-// 推进日计时：每满 FG_DAY_SAVE_MS 请求保存，每满 FG_DAY_MS 送 FG_DAILY_POINTS。
+// 每开机运行满 FG_DAY_MS 送 FG_DAILY_POINTS。
 static uint32_t tick_day(fish_game_t *game, uint32_t now_ms)
 {
-    fg_progress_t *p = &game->progress;
-    uint32_t before = p->day_ms;
     uint32_t fx = 0;
 
-    p->day_ms += now_ms - game->clock_ms;
-    game->clock_ms = now_ms;
-    if (p->day_ms / FG_DAY_SAVE_MS != before / FG_DAY_SAVE_MS) {
-        fx |= FG_FX_SAVE;
-    }
-    while (p->day_ms >= FG_DAY_MS) {
-        p->day_ms -= FG_DAY_MS;
-        p->points = p->points > UINT32_MAX - FG_DAILY_POINTS ? UINT32_MAX : p->points + FG_DAILY_POINTS;
+    while (reached(now_ms, game->next_grant_ms)) {
+        game->next_grant_ms += FG_DAY_MS;
+        add_points(&game->progress, FG_DAILY_POINTS);
         fx |= FG_FX_SAVE | FG_FX_UPDATE;
     }
     return fx;
@@ -382,8 +424,5 @@ uint32_t fish_game_ms_until_next(const fish_game_t *game, uint32_t now_ms)
     if (game->screen_on && dim != FG_NO_DEADLINE) {
         next = min_u32(next, until(now_ms, game->last_activity_ms + dim));
     }
-    // 下一个日计时保存点（FG_DAY_MS 是 FG_DAY_SAVE_MS 的整数倍，赠送点也在其中）。
-    next = min_u32(next, until(now_ms, game->clock_ms + FG_DAY_SAVE_MS -
-                                           game->progress.day_ms % FG_DAY_SAVE_MS));
-    return next;
+    return min_u32(next, until(now_ms, game->next_grant_ms));
 }

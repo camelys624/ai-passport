@@ -137,7 +137,12 @@ static void test_click_needs_press_in_same_view(void)
     CHECK(g.album_index == FISH_ENTRY_COUNT - 1);
     fish_game_input(&g, FG_KEY_DOWN, FG_INPUT_PRESS, 1800);
     CHECK(g.album_index == 0);
-    tap(&g, FG_KEY_OK, 1900);
+    // 翻页状态下单击 OK（鱼篓为空）不退出；长按才退出。
+    fish_game_input(&g, FG_KEY_OK, FG_INPUT_PRESS, 1900);
+    CHECK(fish_game_input(&g, FG_KEY_OK, FG_INPUT_CLICK, 1950) == 0);
+    CHECK(g.view == FG_VIEW_ALBUM);
+    fish_game_input(&g, FG_KEY_OK, FG_INPUT_PRESS, 2000);
+    CHECK(fish_game_input(&g, FG_KEY_OK, FG_INPUT_LONG, 3500) & FG_FX_REDRAW);
     CHECK(g.view == FG_VIEW_READY);
 }
 
@@ -313,8 +318,8 @@ static void test_idle_dim_outside_waiting(void)
     fish_game_input(&g, FG_KEY_DOWN, FG_INPUT_PRESS, 30000);
     CHECK(fish_game_tick(&g, 30000 + FG_IDLE_DIM_MS - 1) == 0);
     CHECK(fish_game_tick(&g, 30000 + FG_IDLE_DIM_MS) == FG_FX_SCREEN_OFF);
-    // 只剩日计时保存点。
-    CHECK(fish_game_ms_until_next(&g, 30000 + FG_IDLE_DIM_MS) == FG_DAY_SAVE_MS - 30000 - FG_IDLE_DIM_MS);
+    // 只剩每日赠送。
+    CHECK(fish_game_ms_until_next(&g, 30000 + FG_IDLE_DIM_MS) == FG_DAY_MS - 30000 - FG_IDLE_DIM_MS);
 }
 
 static void test_points_gate_cast(void)
@@ -335,11 +340,11 @@ static void test_points_gate_cast(void)
     CHECK(g.view == FG_VIEW_WAITING && g.progress.points == 14);
 }
 
-static void test_catch_awards_points_except_junk(void)
+static void test_catch_goes_to_stock_not_points(void)
 {
     for (uint8_t e = 0; e < FISH_ENTRY_COUNT; ++e) {
         bool junk_zero = strcmp(FISH_ENTRIES[e].name, "水草") == 0 || strcmp(FISH_ENTRIES[e].name, "旧靴子") == 0;
-        CHECK(junk_zero == (FISH_ENTRIES[e].points == 0));
+        CHECK(junk_zero == (FISH_ENTRIES[e].price == 0));
     }
 
     fish_game_t g;
@@ -353,28 +358,83 @@ static void test_catch_awards_points_except_junk(void)
         tap(&g, (fg_key_t)g.steps[g.step_index], ++now);
     }
     CHECK(g.outcome == FG_OUTCOME_CAUGHT);
-    CHECK(g.progress.points == before + FISH_ENTRIES[g.entry].points);
+    CHECK(g.progress.points == before);
+    CHECK(g.progress.counts[g.entry] == 1);
+    CHECK(g.progress.stock[g.entry] == (FISH_ENTRIES[g.entry].price > 0 ? 1 : 0));
 }
 
-static void test_daily_grant(void)
+static void open_album(fish_game_t *g, uint32_t now)
+{
+    fish_game_input(g, FG_KEY_OK, FG_INPUT_PRESS, now);
+    fish_game_input(g, FG_KEY_OK, FG_INPUT_LONG, now + 1500);
+}
+
+static uint32_t click_ok(fish_game_t *g, uint32_t now)
+{
+    return fish_game_input(g, FG_KEY_OK, FG_INPUT_PRESS, now) | fish_game_input(g, FG_KEY_OK, FG_INPUT_CLICK, now);
+}
+
+static void test_album_sell(void)
 {
     fish_game_t g;
-    fg_progress_t saved = {.points = 3, .day_ms = FG_DAY_MS - FG_DAY_SAVE_MS - 10};
-    fish_game_init(&g, &saved, 7, 1000);
-    CHECK(fish_game_ms_until_next(&g, 1000) == 10);
-    CHECK(fish_game_tick(&g, 1010) & FG_FX_SAVE); // 小时保存点
-    CHECK(g.progress.points == 3);
+    fg_progress_t saved = {.points = 7};
+    saved.counts[0] = 5;
+    saved.stock[0] = 3;
+    saved.counts[6] = 2; // 水草：记入鱼册，不能卖
+    fish_game_init(&g, &saved, 7, 0);
+    open_album(&g, 10);
+    CHECK(g.view == FG_VIEW_ALBUM && g.album_index == 0 && g.sell_qty == 0);
 
-    uint32_t at = 1010 + FG_DAY_SAVE_MS;
-    CHECK(fish_game_tick(&g, 1000 + FG_IDLE_DIM_MS) == FG_FX_SCREEN_OFF); // 黑屏后只剩日计时
+    // OK 进入选数量，▲ 加、▼ 减，在 1..3 之间循环。
+    CHECK(click_ok(&g, 2000) == FG_FX_UPDATE && g.sell_qty == 1);
+    fish_game_input(&g, FG_KEY_UP, FG_INPUT_PRESS, 2100);
+    fish_game_input(&g, FG_KEY_UP, FG_INPUT_PRESS, 2200);
+    CHECK(g.sell_qty == 3);
+    fish_game_input(&g, FG_KEY_UP, FG_INPUT_PRESS, 2300);
+    CHECK(g.sell_qty == 1 && g.album_index == 0);
+    fish_game_input(&g, FG_KEY_DOWN, FG_INPUT_PRESS, 2400);
+    CHECK(g.sell_qty == 3);
+    fish_game_input(&g, FG_KEY_DOWN, FG_INPUT_PRESS, 2500);
+    CHECK(g.sell_qty == 2);
+
+    // 长按取消卖出，仍在鱼册。
+    fish_game_input(&g, FG_KEY_OK, FG_INPUT_PRESS, 2600);
+    CHECK(fish_game_input(&g, FG_KEY_OK, FG_INPUT_LONG, 4100) == FG_FX_UPDATE);
+    CHECK(g.view == FG_VIEW_ALBUM && g.sell_qty == 0 && g.progress.stock[0] == 3);
+
+    // 选 2 条卖出：积分 += 2 × 单价，鱼篓减少，鱼册收集数不变。
+    click_ok(&g, 5000);
+    fish_game_input(&g, FG_KEY_UP, FG_INPUT_PRESS, 5100);
+    uint32_t fx = click_ok(&g, 5200);
+    CHECK(fx & FG_FX_SAVE);
+    CHECK(g.progress.points == 7 + 2U * FISH_ENTRIES[0].price);
+    CHECK(g.progress.stock[0] == 1 && g.progress.counts[0] == 5 && g.sell_qty == 0);
+
+    // 不能卖的水草、鱼篓为空的条目：OK 无效。
+    g.album_index = 6;
+    CHECK(click_ok(&g, 6000) == 0 && g.sell_qty == 0);
+    g.album_index = 1;
+    CHECK(click_ok(&g, 6100) == 0 && g.sell_qty == 0);
+}
+
+static void test_daily_grant_by_uptime(void)
+{
+    fish_game_t g;
+    fg_progress_t saved = {.points = 3};
+    fish_game_init(&g, &saved, 7, 1000);
+    CHECK(g.progress.points == 3); // 开机不送，满一天才送
+
+    uint32_t at = 1000 + FG_DAY_MS;
+    CHECK(fish_game_tick(&g, 1000 + FG_IDLE_DIM_MS) == FG_FX_SCREEN_OFF);
     CHECK(fish_game_ms_until_next(&g, at - 1) == 1);
+    CHECK(fish_game_tick(&g, at - 1) == 0);
     uint32_t fx = fish_game_tick(&g, at);
     CHECK((fx & (FG_FX_SAVE | FG_FX_UPDATE)) == (FG_FX_SAVE | FG_FX_UPDATE));
-    CHECK(g.progress.points == 3 + FG_DAILY_POINTS && g.progress.day_ms == 0);
+    CHECK(g.progress.points == 3 + FG_DAILY_POINTS);
 
     // 很久没有 tick（跨两天）：两次都送。
     fish_game_tick(&g, at + 2 * FG_DAY_MS + 5);
-    CHECK(g.progress.points == 3 + 3 * FG_DAILY_POINTS && g.progress.day_ms == 5);
+    CHECK(g.progress.points == 3 + 3 * FG_DAILY_POINTS);
 
     fish_game_t fresh;
     fish_game_init(&fresh, NULL, 7, 0);
@@ -396,9 +456,11 @@ static void test_timer_wraparound(void)
 
 static void test_save_roundtrip_and_rejects(void)
 {
-    fg_progress_t p = {.bait = 2, .casts = 70000, .escapes = 12, .points = 123456, .day_ms = 7654321};
+    fg_progress_t p = {.bait = 2, .casts = 70000, .escapes = 12, .points = 123456};
     p.counts[0] = 3;
     p.counts[FISH_ENTRY_MAX - 1] = 65535;
+    p.stock[0] = 2;
+    p.stock[FISH_ENTRY_MAX - 1] = 65534;
     uint8_t buf[FISH_SAVE_SIZE];
     fish_save_encode(&p, buf);
 
@@ -406,8 +468,9 @@ static void test_save_roundtrip_and_rejects(void)
     memset(&q, 0xAA, sizeof(q));
     CHECK(fish_save_decode(buf, sizeof(buf), &q));
     CHECK(q.bait == 2 && q.casts == 70000 && q.escapes == 12);
-    CHECK(q.points == 123456 && q.day_ms == 7654321);
+    CHECK(q.points == 123456);
     CHECK(memcmp(q.counts, p.counts, sizeof(p.counts)) == 0);
+    CHECK(memcmp(q.stock, p.stock, sizeof(p.stock)) == 0);
 
     fg_progress_t untouched = q;
     CHECK(!fish_save_decode(buf, sizeof(buf) - 1, &q));
@@ -419,13 +482,13 @@ static void test_save_roundtrip_and_rejects(void)
     CHECK(!fish_save_decode(NULL, FISH_SAVE_SIZE, &q));
     CHECK(memcmp(&q, &untouched, sizeof(q)) == 0);
 
-    // 版本 1 存档：保留渔获，积分从每日赠送量开始。
+    // 版本 1 存档：保留鱼册，积分从每日赠送量开始，鱼篓为空。
     buf[0] = 'F';
     buf[2] = 1;
     CHECK(!fish_save_decode(buf, FISH_SAVE_SIZE, &q));
     CHECK(fish_save_decode(buf, FISH_SAVE_V1_SIZE, &q));
     CHECK(q.casts == 70000 && q.counts[0] == 3);
-    CHECK(q.points == FG_DAILY_POINTS && q.day_ms == 0);
+    CHECK(q.points == FG_DAILY_POINTS && q.stock[0] == 0 && q.stock[FISH_ENTRY_MAX - 1] == 0);
 }
 
 int main(void)
@@ -442,8 +505,9 @@ int main(void)
     test_reel_failures();
     test_idle_dim_outside_waiting();
     test_points_gate_cast();
-    test_catch_awards_points_except_junk();
-    test_daily_grant();
+    test_catch_goes_to_stock_not_points();
+    test_album_sell();
+    test_daily_grant_by_uptime();
     test_timer_wraparound();
     test_save_roundtrip_and_rejects();
     puts("test_fish_game: PASS");

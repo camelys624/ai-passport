@@ -4,11 +4,12 @@
 //       → 结果（钓到 / 跑掉）→ 准备。准备页长按 OK 进入鱼册。
 //
 // 输入约定（与 bsp_btn_ev_t 对应）：
-//   PRESS  按下瞬间，用于换饵、提竿、收线、结果页继续、鱼册翻页与返回等需要即时响应、
-//          可以连按的操作。按键组件在连按 3 次以上时不报 CLICK/DOUBLE，所以“继续/返回”
+//   PRESS  按下瞬间，用于换饵、提竿、收线、结果页继续、鱼册翻页与选卖出数量等需要即时响应、
+//          可以连按的操作。按键组件在连按 3 次以上时不报 CLICK/DOUBLE，所以“继续”
 //          不依赖 CLICK。
-//   CLICK  抬起后确认的单击（双击也按单击处理），只用于准备页抛竿——同一个 OK 长按要进鱼册。
-//   LONG   长按，用于进入鱼册、等待中收竿。
+//   CLICK  抬起后确认的单击（双击也按单击处理），用于准备页抛竿、鱼册卖鱼——同一个 OK
+//          长按要进出鱼册。
+//   LONG   长按，用于进出鱼册、取消卖出、等待中收竿。
 // CLICK/LONG 只有在“当前页面收到过同一键的 PRESS”时才生效：上一页最后一次按键的
 // 抬起事件不会穿透到新页面。结果页出现后需要先停手 FG_RESULT_GUARD_MS（期间每次按键
 // 都重新计时），再按 OK 才继续，连按收线时不会把结果页直接跳过。
@@ -16,9 +17,9 @@
 // 黑屏：等待中 5 s 无操作、其他页 60 s 无操作时请求关屏；咬钩和收线期间不关屏。
 // 黑屏时的第一次按下只用于亮屏，不触发任何玩法动作。
 //
-// 积分：新存档送 FG_DAILY_POINTS；之后设备每运行满 FG_DAY_MS 再送一次（设备没有实时
-// 时钟，关机的时间不计入）。抛竿扣饵料积分，积分不够时不能抛竿；钓到渔获加积分。
-// 日计时每满 FG_DAY_SAVE_MS 请求保存一次，断电最多丢这么长的计时进度。
+// 积分：新存档送 FG_DAILY_POINTS；之后按开机时间，每运行满 FG_DAY_MS 再送一次（重启从头计）。
+// 抛竿扣饵料积分，积分不够时不能抛竿。钓到的渔获记入鱼册，能卖的（price > 0）同时放进
+// 鱼篓（stock）；在鱼册里 OK 选中卖出，▲▼ 选数量，OK 确认卖出换积分，长按 OK 取消/退出。
 //
 // 所有时间参数为单调毫秒计数，允许 uint32_t 回绕。
 #pragma once
@@ -39,7 +40,6 @@
 #define FG_NO_DEADLINE UINT32_MAX
 #define FG_DAILY_POINTS 100U
 #define FG_DAY_MS 86400000U
-#define FG_DAY_SAVE_MS 3600000U
 
 typedef enum {
     FG_VIEW_READY = 0,
@@ -86,10 +86,10 @@ enum {
 typedef struct {
     uint8_t bait;                       // 上次抛竿用的饵料
     uint32_t points;                    // 当前积分
-    uint32_t day_ms;                    // 距上次每日赠送已累计的运行时间
+    uint16_t stock[FISH_ENTRY_MAX];     // 鱼篓里还没卖的数量，下标对应 FISH_ENTRIES
     uint32_t casts;                     // 累计抛竿次数
     uint32_t escapes;                   // 累计跑鱼次数
-    uint16_t counts[FISH_ENTRY_MAX];    // 每种渔获的累计数量，下标对应 FISH_ENTRIES
+    uint16_t counts[FISH_ENTRY_MAX];    // 每种渔获的累计数量（鱼册收集记录，卖掉不减）
 } fg_progress_t;
 
 typedef struct {
@@ -97,7 +97,7 @@ typedef struct {
     bool screen_on;
     uint32_t rng;
     fg_progress_t progress;
-    uint32_t clock_ms;         // 日计时已计入 progress.day_ms 的时刻
+    uint32_t next_grant_ms;    // 下一次每日赠送的时刻（开机时间）
     uint32_t last_activity_ms;
     uint32_t cast_ms;          // 本竿抛出的时刻
     uint32_t deadline_ms;      // 等待：咬钩时刻；咬钩：提竿截止；收线：本步截止
@@ -109,6 +109,7 @@ typedef struct {
     fg_outcome_t outcome;
     uint32_t result_ms;        // 结果页安静期起点：进入时刻，或安静期内最后一次按键
     uint8_t album_index;
+    uint16_t sell_qty;         // 鱼册：正在选的卖出数量；0 = 翻页状态
     uint8_t armed;             // 当前页面收到过 PRESS 的键（位掩码）
     bool short_points;         // 准备页：刚才因积分不足没能抛竿
 } fish_game_t;

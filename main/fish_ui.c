@@ -462,12 +462,7 @@ static lv_obj_t *render_result(const fish_game_t *game, int battery)
         rarity_chip(scr, entry, true);
         specimen(scr, 120, 104, game->entry, true);
         card_texts(card(scr), entry->name, entry->desc);
-        if (entry->points > 0) {
-            snprintf(text, sizeof(text), "第 %u 次收获　+%u 积分", (unsigned)game->progress.counts[game->entry],
-                     (unsigned)entry->points);
-        } else {
-            snprintf(text, sizeof(text), "第 %u 次收获", (unsigned)game->progress.counts[game->entry]);
-        }
+        snprintf(text, sizeof(text), "第 %u 次收获", (unsigned)game->progress.counts[game->entry]);
         line_text(scr, fish_font_body, C_FOAM, 272, text);
         line_text(scr, fish_font_body, C_MIST, 294, "OK 继续");
         return scr;
@@ -498,22 +493,43 @@ static lv_obj_t *render_result(const fish_game_t *game, int battery)
 
 static lv_obj_t *render_album(const fish_game_t *game, int battery)
 {
-    const fish_entry_t *entry = &FISH_ENTRIES[game->album_index];
-    uint16_t count = game->progress.counts[game->album_index];
+    uint8_t index = game->album_index;
+    const fish_entry_t *entry = &FISH_ENTRIES[index];
+    uint16_t count = game->progress.counts[index];
+    uint16_t stock = game->progress.stock[index];
     bool known = count > 0;
-    char text[32];
+    char text[48];
+    char body[48];
     lv_obj_t *scr;
 
-    snprintf(text, sizeof(text), "鱼册 %u/%u", (unsigned)fish_game_collected(&game->progress),
-             (unsigned)FISH_ENTRY_COUNT);
+    snprintf(text, sizeof(text), "积分 %lu", (unsigned long)game->progress.points);
     scr = scene(text, battery);
     rarity_chip(scr, entry, known);
-    specimen(scr, 120, 104, game->album_index, known);
+    specimen(scr, 120, 104, index, known);
+
+    if (game->sell_qty > 0) {
+        snprintf(text, sizeof(text), "卖出%s", entry->name);
+        snprintf(body, sizeof(body), "%u 条 = %lu 积分\n鱼篓共 %u 条", (unsigned)game->sell_qty,
+                 (unsigned long)game->sell_qty * entry->price, (unsigned)stock);
+        card_texts(card(scr), text, body);
+        line_text(scr, fish_font_body, C_FOAM, 272, "▲▼ 选数量");
+        line_text(scr, fish_font_body, C_MIST, 294, "OK 卖出　长按 取消");
+        return scr;
+    }
+
     card_texts(card(scr), known ? entry->name : "？？？", known ? entry->desc : "还没有钓到过");
-    snprintf(text, sizeof(text), "%u/%u · 收获 %u 次", (unsigned)game->album_index + 1U,
-             (unsigned)FISH_ENTRY_COUNT, (unsigned)count);
+    if (!known) {
+        snprintf(text, sizeof(text), "%u/%u · 未发现", (unsigned)index + 1U, (unsigned)FISH_ENTRY_COUNT);
+    } else if (entry->price == 0) {
+        snprintf(text, sizeof(text), "%u/%u · 收获 %u · 不能卖", (unsigned)index + 1U,
+                 (unsigned)FISH_ENTRY_COUNT, (unsigned)count);
+    } else {
+        snprintf(text, sizeof(text), "%u/%u · 鱼篓 %u · 单价 %u", (unsigned)index + 1U,
+                 (unsigned)FISH_ENTRY_COUNT, (unsigned)stock, (unsigned)entry->price);
+    }
     line_text(scr, fish_font_body, C_FOAM, 272, text);
-    line_text(scr, fish_font_body, C_MIST, 294, "▲▼ 翻页　OK 返回");
+    line_text(scr, fish_font_body, C_MIST, 294,
+              stock > 0 && entry->price > 0 ? "OK 卖鱼　长按 返回" : "▲▼ 翻页　长按 返回");
     return scr;
 }
 
