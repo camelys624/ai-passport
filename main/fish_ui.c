@@ -85,6 +85,7 @@ static struct {
     lv_obj_t *bait_index;
     lv_obj_t *bait_name;
     lv_obj_t *bait_hint;
+    lv_obj_t *points;
     lv_obj_t *animated[2];
     lv_obj_t *drifters[DRIFTER_COUNT];
     lv_timer_t *drift_timer;
@@ -361,15 +362,15 @@ static lv_obj_t *render_ready(const fish_game_t *game, int battery)
              (unsigned)FISH_ENTRY_COUNT);
     scr = scene(status, battery);
     line_text(scr, fish_font_title, C_INK, 50, "口袋垂钓");
-    line_text(scr, fish_font_body, C_INK_SOFT, 88, "选好饵料，抛出一竿");
+    s_ui.points = line_text(scr, fish_font_body, C_INK_SOFT, 88, "");
 
-    // 饵料卡：左边像素图标，右边名称与序号，底部一句提示。
+    // 饵料卡：左边像素图标，右边名称与每竿积分，底部一句提示（积分不足时改为提醒）。
     c = card(scr);
     s_ui.bait_icon = lv_image_create(c);
     lv_obj_set_pos(s_ui.bait_icon, 12, 8);
     s_ui.bait_name = label(c, fish_font_title, C_INK, 72, 8, 116, LV_TEXT_ALIGN_LEFT, "");
-    s_ui.bait_index = label(c, fish_font_body, C_INK_SOFT, 72, 40, 70, LV_TEXT_ALIGN_LEFT, "");
-    label(c, fish_font_body, C_ACCENT, 140, 40, 48, LV_TEXT_ALIGN_RIGHT, "▲▼");
+    s_ui.bait_index = label(c, fish_font_body, C_INK_SOFT, 72, 40, 84, LV_TEXT_ALIGN_LEFT, "");
+    label(c, fish_font_body, C_ACCENT, 156, 40, 32, LV_TEXT_ALIGN_RIGHT, "▲▼");
     s_ui.bait_hint = label(c, fish_font_body, C_INK_SOFT, 0, 68, 200, LV_TEXT_ALIGN_CENTER, "");
 
     line_text(scr, fish_font_body, C_FOAM, 272, "OK 抛竿　▲▼ 换饵");
@@ -461,7 +462,12 @@ static lv_obj_t *render_result(const fish_game_t *game, int battery)
         rarity_chip(scr, entry, true);
         specimen(scr, 120, 104, game->entry, true);
         card_texts(card(scr), entry->name, entry->desc);
-        snprintf(text, sizeof(text), "第 %u 次收获", (unsigned)game->progress.counts[game->entry]);
+        if (entry->points > 0) {
+            snprintf(text, sizeof(text), "第 %u 次收获　+%u 积分", (unsigned)game->progress.counts[game->entry],
+                     (unsigned)entry->points);
+        } else {
+            snprintf(text, sizeof(text), "第 %u 次收获", (unsigned)game->progress.counts[game->entry]);
+        }
         line_text(scr, fish_font_body, C_FOAM, 272, text);
         line_text(scr, fish_font_body, C_MIST, 294, "OK 继续");
         return scr;
@@ -567,11 +573,17 @@ static void refresh_ready(const fish_game_t *game)
     if (s_ui.bait_name == NULL) {
         return;
     }
-    lv_label_set_text_fmt(s_ui.bait_index, "饵料 %u/%u", (unsigned)game->progress.bait + 1U,
-                          (unsigned)FISH_BAIT_COUNT);
+    lv_label_set_text_fmt(s_ui.points, "我的积分：%lu", (unsigned long)game->progress.points);
+    lv_label_set_text_fmt(s_ui.bait_index, "%u 积分/竿", (unsigned)bait->cost);
     lv_image_set_src(s_ui.bait_icon, &fish_img_baits[game->progress.bait]);
     lv_label_set_text(s_ui.bait_name, bait->name);
-    lv_label_set_text(s_ui.bait_hint, bait->hint);
+    if (game->short_points) {
+        lv_label_set_text_fmt(s_ui.bait_hint, "积分不足，每天送 %u", (unsigned)FG_DAILY_POINTS);
+        lv_obj_set_style_text_color(s_ui.bait_hint, lv_color_hex(C_ACCENT), 0);
+    } else {
+        lv_label_set_text(s_ui.bait_hint, bait->hint);
+        lv_obj_set_style_text_color(s_ui.bait_hint, lv_color_hex(C_INK_SOFT), 0);
+    }
 }
 
 static void anim_size(void *var, int32_t v)

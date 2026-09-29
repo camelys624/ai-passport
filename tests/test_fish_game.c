@@ -90,7 +90,7 @@ static void test_catalog_is_playable(void)
 static void test_bait_selection_and_cast(void)
 {
     fish_game_t g;
-    fg_progress_t saved = {.bait = 2};
+    fg_progress_t saved = {.bait = 2, .points = 100};
     fish_game_init(&g, &saved, 7, 1000);
     CHECK(g.progress.bait == 2);
 
@@ -101,9 +101,10 @@ static void test_bait_selection_and_cast(void)
     fish_game_input(&g, FG_KEY_UP, FG_INPUT_PRESS, 1000);
     CHECK(g.progress.bait == 1);
 
-    CHECK(tap(&g, FG_KEY_OK, 2000) & FG_FX_REDRAW);
+    CHECK(tap(&g, FG_KEY_OK, 2000) == (FG_FX_REDRAW | FG_FX_SAVE));
     CHECK(g.view == FG_VIEW_WAITING);
     CHECK(g.progress.casts == 1);
+    CHECK(g.progress.points == 100U - FISH_BAITS[1].cost);
     CHECK(g.deadline_ms - 2000 >= FISH_BAITS[1].wait_min_ms);
     CHECK(g.deadline_ms - 2000 <= FISH_BAITS[1].wait_max_ms);
 
@@ -158,10 +159,11 @@ static void test_waiting_dims_and_first_press_only_wakes(void)
     CHECK(fish_game_input(&g, FG_KEY_OK, FG_INPUT_LONG, 9500) == 0);
     CHECK(g.view == FG_VIEW_WAITING && g.screen_on);
 
-    // 再次长按才收竿，并保存抛竿次数。
+    // 再次长按才收竿；饵料已在抛竿时扣掉并保存，收竿不退积分。
     fish_game_input(&g, FG_KEY_OK, FG_INPUT_PRESS, 10000);
     uint32_t fx = fish_game_input(&g, FG_KEY_OK, FG_INPUT_LONG, 11500);
-    CHECK(fx == (FG_FX_REDRAW | FG_FX_SAVE));
+    CHECK(fx == FG_FX_REDRAW);
+    CHECK(g.progress.points == FG_DAILY_POINTS - FISH_BAITS[0].cost);
     CHECK(g.view == FG_VIEW_READY);
     CHECK(g.progress.casts == 1);
 }
@@ -311,7 +313,72 @@ static void test_idle_dim_outside_waiting(void)
     fish_game_input(&g, FG_KEY_DOWN, FG_INPUT_PRESS, 30000);
     CHECK(fish_game_tick(&g, 30000 + FG_IDLE_DIM_MS - 1) == 0);
     CHECK(fish_game_tick(&g, 30000 + FG_IDLE_DIM_MS) == FG_FX_SCREEN_OFF);
-    CHECK(fish_game_ms_until_next(&g, 30000 + FG_IDLE_DIM_MS) == FG_NO_DEADLINE);
+    // 只剩日计时保存点。
+    CHECK(fish_game_ms_until_next(&g, 30000 + FG_IDLE_DIM_MS) == FG_DAY_SAVE_MS - 30000 - FG_IDLE_DIM_MS);
+}
+
+static void test_points_gate_cast(void)
+{
+    fish_game_t g;
+    fg_progress_t saved = {.bait = 2, .points = 19};
+    fish_game_init(&g, &saved, 7, 0);
+
+    // 亮片 20 积分，19 不够：留在准备页，提示不足，积分和抛竿数不变。
+    CHECK(tap(&g, FG_KEY_OK, 100) == FG_FX_UPDATE);
+    CHECK(g.view == FG_VIEW_READY && g.short_points);
+    CHECK(g.progress.points == 19 && g.progress.casts == 0);
+
+    // 换饵清掉提示；蚯蚓 5 积分可以抛。
+    fish_game_input(&g, FG_KEY_DOWN, FG_INPUT_PRESS, 200);
+    CHECK(g.progress.bait == 0 && !g.short_points);
+    tap(&g, FG_KEY_OK, 300);
+    CHECK(g.view == FG_VIEW_WAITING && g.progress.points == 14);
+}
+
+static void test_catch_awards_points_except_junk(void)
+{
+    for (uint8_t e = 0; e < FISH_ENTRY_COUNT; ++e) {
+        bool junk_zero = strcmp(FISH_ENTRIES[e].name, "水草") == 0 || strcmp(FISH_ENTRIES[e].name, "旧靴子") == 0;
+        CHECK(junk_zero == (FISH_ENTRIES[e].points == 0));
+    }
+
+    fish_game_t g;
+    fish_game_init(&g, NULL, 7, 0);
+    uint32_t bite = cast_until_bite(&g, 0);
+    uint32_t before = g.progress.points;
+    uint32_t now = bite + 10;
+    tap(&g, FG_KEY_OK, now);
+    now += FG_REEL_GRACE_MS;
+    while (g.view == FG_VIEW_REEL) {
+        tap(&g, (fg_key_t)g.steps[g.step_index], ++now);
+    }
+    CHECK(g.outcome == FG_OUTCOME_CAUGHT);
+    CHECK(g.progress.points == before + FISH_ENTRIES[g.entry].points);
+}
+
+static void test_daily_grant(void)
+{
+    fish_game_t g;
+    fg_progress_t saved = {.points = 3, .day_ms = FG_DAY_MS - FG_DAY_SAVE_MS - 10};
+    fish_game_init(&g, &saved, 7, 1000);
+    CHECK(fish_game_ms_until_next(&g, 1000) == 10);
+    CHECK(fish_game_tick(&g, 1010) & FG_FX_SAVE); // 小时保存点
+    CHECK(g.progress.points == 3);
+
+    uint32_t at = 1010 + FG_DAY_SAVE_MS;
+    CHECK(fish_game_tick(&g, 1000 + FG_IDLE_DIM_MS) == FG_FX_SCREEN_OFF); // 黑屏后只剩日计时
+    CHECK(fish_game_ms_until_next(&g, at - 1) == 1);
+    uint32_t fx = fish_game_tick(&g, at);
+    CHECK((fx & (FG_FX_SAVE | FG_FX_UPDATE)) == (FG_FX_SAVE | FG_FX_UPDATE));
+    CHECK(g.progress.points == 3 + FG_DAILY_POINTS && g.progress.day_ms == 0);
+
+    // 很久没有 tick（跨两天）：两次都送。
+    fish_game_tick(&g, at + 2 * FG_DAY_MS + 5);
+    CHECK(g.progress.points == 3 + 3 * FG_DAILY_POINTS && g.progress.day_ms == 5);
+
+    fish_game_t fresh;
+    fish_game_init(&fresh, NULL, 7, 0);
+    CHECK(fresh.progress.points == FG_DAILY_POINTS);
 }
 
 static void test_timer_wraparound(void)
@@ -329,7 +396,7 @@ static void test_timer_wraparound(void)
 
 static void test_save_roundtrip_and_rejects(void)
 {
-    fg_progress_t p = {.bait = 2, .casts = 70000, .escapes = 12};
+    fg_progress_t p = {.bait = 2, .casts = 70000, .escapes = 12, .points = 123456, .day_ms = 7654321};
     p.counts[0] = 3;
     p.counts[FISH_ENTRY_MAX - 1] = 65535;
     uint8_t buf[FISH_SAVE_SIZE];
@@ -339,6 +406,7 @@ static void test_save_roundtrip_and_rejects(void)
     memset(&q, 0xAA, sizeof(q));
     CHECK(fish_save_decode(buf, sizeof(buf), &q));
     CHECK(q.bait == 2 && q.casts == 70000 && q.escapes == 12);
+    CHECK(q.points == 123456 && q.day_ms == 7654321);
     CHECK(memcmp(q.counts, p.counts, sizeof(p.counts)) == 0);
 
     fg_progress_t untouched = q;
@@ -350,6 +418,14 @@ static void test_save_roundtrip_and_rejects(void)
     CHECK(!fish_save_decode(buf, sizeof(buf), &q));
     CHECK(!fish_save_decode(NULL, FISH_SAVE_SIZE, &q));
     CHECK(memcmp(&q, &untouched, sizeof(q)) == 0);
+
+    // 版本 1 存档：保留渔获，积分从每日赠送量开始。
+    buf[0] = 'F';
+    buf[2] = 1;
+    CHECK(!fish_save_decode(buf, FISH_SAVE_SIZE, &q));
+    CHECK(fish_save_decode(buf, FISH_SAVE_V1_SIZE, &q));
+    CHECK(q.casts == 70000 && q.counts[0] == 3);
+    CHECK(q.points == FG_DAILY_POINTS && q.day_ms == 0);
 }
 
 int main(void)
@@ -365,6 +441,9 @@ int main(void)
     test_reel_run_hint();
     test_reel_failures();
     test_idle_dim_outside_waiting();
+    test_points_gate_cast();
+    test_catch_awards_points_except_junk();
+    test_daily_grant();
     test_timer_wraparound();
     test_save_roundtrip_and_rejects();
     puts("test_fish_game: PASS");

@@ -16,6 +16,10 @@
 // 黑屏：等待中 5 s 无操作、其他页 60 s 无操作时请求关屏；咬钩和收线期间不关屏。
 // 黑屏时的第一次按下只用于亮屏，不触发任何玩法动作。
 //
+// 积分：新存档送 FG_DAILY_POINTS；之后设备每运行满 FG_DAY_MS 再送一次（设备没有实时
+// 时钟，关机的时间不计入）。抛竿扣饵料积分，积分不够时不能抛竿；钓到渔获加积分。
+// 日计时每满 FG_DAY_SAVE_MS 请求保存一次，断电最多丢这么长的计时进度。
+//
 // 所有时间参数为单调毫秒计数，允许 uint32_t 回绕。
 #pragma once
 
@@ -33,6 +37,9 @@
 #define FG_RESULT_GUARD_MS 600U
 #define FG_REEL_GRACE_MS 400U  // 收线开始后这段时间内多按的 OK 不算按错（提竿常连按两下）
 #define FG_NO_DEADLINE UINT32_MAX
+#define FG_DAILY_POINTS 100U
+#define FG_DAY_MS 86400000U
+#define FG_DAY_SAVE_MS 3600000U
 
 typedef enum {
     FG_VIEW_READY = 0,
@@ -78,6 +85,8 @@ enum {
 // 需要跨断电保存的进度。
 typedef struct {
     uint8_t bait;                       // 上次抛竿用的饵料
+    uint32_t points;                    // 当前积分
+    uint32_t day_ms;                    // 距上次每日赠送已累计的运行时间
     uint32_t casts;                     // 累计抛竿次数
     uint32_t escapes;                   // 累计跑鱼次数
     uint16_t counts[FISH_ENTRY_MAX];    // 每种渔获的累计数量，下标对应 FISH_ENTRIES
@@ -88,6 +97,7 @@ typedef struct {
     bool screen_on;
     uint32_t rng;
     fg_progress_t progress;
+    uint32_t clock_ms;         // 日计时已计入 progress.day_ms 的时刻
     uint32_t last_activity_ms;
     uint32_t cast_ms;          // 本竿抛出的时刻
     uint32_t deadline_ms;      // 等待：咬钩时刻；咬钩：提竿截止；收线：本步截止
@@ -100,9 +110,11 @@ typedef struct {
     uint32_t result_ms;        // 结果页安静期起点：进入时刻，或安静期内最后一次按键
     uint8_t album_index;
     uint8_t armed;             // 当前页面收到过 PRESS 的键（位掩码）
+    bool short_points;         // 准备页：刚才因积分不足没能抛竿
 } fish_game_t;
 
-// saved 可为 NULL（全新存档）；非法饵料下标回退到 0。seed 为 0 时使用内置非零种子。
+// saved 为 NULL 时是全新存档（送 FG_DAILY_POINTS）；非法饵料下标回退到 0。
+// seed 为 0 时使用内置非零种子。
 void fish_game_init(fish_game_t *game, const fg_progress_t *saved, uint32_t seed, uint32_t now_ms);
 
 uint32_t fish_game_input(fish_game_t *game, fg_key_t key, fg_input_t input, uint32_t now_ms);

@@ -88,6 +88,8 @@ void fish_game_init(fish_game_t *game, const fg_progress_t *saved, uint32_t seed
     memset(game, 0, sizeof(*game));
     if (saved != NULL) {
         game->progress = *saved;
+    } else {
+        game->progress.points = FG_DAILY_POINTS;
     }
     if (game->progress.bait >= FISH_BAIT_COUNT) {
         game->progress.bait = 0;
@@ -96,12 +98,14 @@ void fish_game_init(fish_game_t *game, const fg_progress_t *saved, uint32_t seed
     game->view = FG_VIEW_READY;
     game->screen_on = true;
     game->last_activity_ms = now_ms;
+    game->clock_ms = now_ms;
 }
 
 static uint32_t enter(fish_game_t *game, fg_view_t view)
 {
     game->view = view;
     game->armed = 0;
+    game->short_points = false;
     return FG_FX_REDRAW;
 }
 
@@ -111,9 +115,12 @@ static uint32_t finish(fish_game_t *game, fg_outcome_t outcome, uint32_t now_ms)
     game->result_ms = now_ms;
     if (outcome == FG_OUTCOME_CAUGHT) {
         uint16_t *count = &game->progress.counts[game->entry];
+        uint32_t points = FISH_ENTRIES[game->entry].points;
         if (*count < UINT16_MAX) {
             ++*count;
         }
+        game->progress.points = game->progress.points > UINT32_MAX - points ? UINT32_MAX
+                                                                             : game->progress.points + points;
         return enter(game, FG_VIEW_RESULT) | FG_FX_SOUND_CATCH | FG_FX_SAVE;
     }
     if (game->progress.escapes < UINT32_MAX) {
@@ -124,12 +131,20 @@ static uint32_t finish(fish_game_t *game, fg_outcome_t outcome, uint32_t now_ms)
 
 static uint32_t cast(fish_game_t *game, uint32_t now_ms)
 {
+    uint16_t cost = FISH_BAITS[game->progress.bait].cost;
+
+    if (game->progress.points < cost) {
+        game->short_points = true;
+        return FG_FX_UPDATE;
+    }
+    game->progress.points -= cost;
     if (game->progress.casts < UINT32_MAX) {
         game->progress.casts++;
     }
     game->cast_ms = now_ms;
     game->deadline_ms = now_ms + fish_game_wait_ms(&game->rng, game->progress.bait);
-    return enter(game, FG_VIEW_WAITING);
+    // 扣掉的积分立即保存，断电不会把饵料退回来。
+    return enter(game, FG_VIEW_WAITING) | FG_FX_SAVE;
 }
 
 static uint32_t start_reel(fish_game_t *game, uint32_t now_ms)
@@ -170,10 +185,12 @@ static uint32_t on_press(fish_game_t *game, fg_key_t key, uint32_t now_ms)
     case FG_VIEW_READY:
         if (key == FG_KEY_UP) {
             game->progress.bait = (uint8_t)((game->progress.bait + FISH_BAIT_COUNT - 1U) % FISH_BAIT_COUNT);
+            game->short_points = false;
             return FG_FX_UPDATE;
         }
         if (key == FG_KEY_DOWN) {
             game->progress.bait = (uint8_t)((game->progress.bait + 1U) % FISH_BAIT_COUNT);
+            game->short_points = false;
             return FG_FX_UPDATE;
         }
         return 0;
@@ -223,8 +240,8 @@ static uint32_t on_long(fish_game_t *game, fg_key_t key)
         game->album_index = 0;
         return enter(game, FG_VIEW_ALBUM);
     case FG_VIEW_WAITING:
-        // 收竿：抛竿次数已计入，需要保存。
-        return enter(game, FG_VIEW_READY) | FG_FX_SAVE;
+        // 收竿：饵料已消耗，不退积分；抛竿时已保存。
+        return enter(game, FG_VIEW_READY);
     // 鱼册里按下 OK 就已返回准备页，长按事件到达时不再属于鱼册。
     default:
         return 0;
@@ -269,7 +286,27 @@ static uint32_t dim_limit(const fish_game_t *game)
     }
 }
 
-uint32_t fish_game_tick(fish_game_t *game, uint32_t now_ms)
+// 推进日计时：每满 FG_DAY_SAVE_MS 请求保存，每满 FG_DAY_MS 送 FG_DAILY_POINTS。
+static uint32_t tick_day(fish_game_t *game, uint32_t now_ms)
+{
+    fg_progress_t *p = &game->progress;
+    uint32_t before = p->day_ms;
+    uint32_t fx = 0;
+
+    p->day_ms += now_ms - game->clock_ms;
+    game->clock_ms = now_ms;
+    if (p->day_ms / FG_DAY_SAVE_MS != before / FG_DAY_SAVE_MS) {
+        fx |= FG_FX_SAVE;
+    }
+    while (p->day_ms >= FG_DAY_MS) {
+        p->day_ms -= FG_DAY_MS;
+        p->points = p->points > UINT32_MAX - FG_DAILY_POINTS ? UINT32_MAX : p->points + FG_DAILY_POINTS;
+        fx |= FG_FX_SAVE | FG_FX_UPDATE;
+    }
+    return fx;
+}
+
+static uint32_t tick_play(fish_game_t *game, uint32_t now_ms)
 {
     uint32_t fx = 0;
     uint32_t dim;
@@ -315,6 +352,12 @@ uint32_t fish_game_tick(fish_game_t *game, uint32_t now_ms)
     return fx;
 }
 
+uint32_t fish_game_tick(fish_game_t *game, uint32_t now_ms)
+{
+    uint32_t fx = tick_day(game, now_ms);
+    return fx | tick_play(game, now_ms);
+}
+
 static uint32_t min_u32(uint32_t a, uint32_t b)
 {
     return a < b ? a : b;
@@ -339,5 +382,8 @@ uint32_t fish_game_ms_until_next(const fish_game_t *game, uint32_t now_ms)
     if (game->screen_on && dim != FG_NO_DEADLINE) {
         next = min_u32(next, until(now_ms, game->last_activity_ms + dim));
     }
+    // 下一个日计时保存点（FG_DAY_MS 是 FG_DAY_SAVE_MS 的整数倍，赠送点也在其中）。
+    next = min_u32(next, until(now_ms, game->clock_ms + FG_DAY_SAVE_MS -
+                                           game->progress.day_ms % FG_DAY_SAVE_MS));
     return next;
 }

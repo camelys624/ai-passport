@@ -35,12 +35,17 @@ void fish_save_encode(const fg_progress_t *progress, uint8_t out[FISH_SAVE_SIZE]
     for (unsigned i = 0; i < FISH_ENTRY_MAX; ++i) {
         put_u16(out + 12 + 2 * i, progress->counts[i]);
     }
+    put_u32(out + FISH_SAVE_V1_SIZE, progress->points);
+    put_u32(out + FISH_SAVE_V1_SIZE + 4, progress->day_ms);
 }
 
 bool fish_save_decode(const uint8_t *data, size_t length, fg_progress_t *out)
 {
-    if (data == NULL || length != FISH_SAVE_SIZE || data[0] != 'F' || data[1] != 'S' ||
-        data[2] != FISH_SAVE_VERSION) {
+    if (data == NULL || length < 3 || data[0] != 'F' || data[1] != 'S') {
+        return false;
+    }
+    if (!(data[2] == 1U && length == FISH_SAVE_V1_SIZE) &&
+        !(data[2] == FISH_SAVE_VERSION && length == FISH_SAVE_SIZE)) {
         return false;
     }
     out->bait = data[3];
@@ -48,6 +53,13 @@ bool fish_save_decode(const uint8_t *data, size_t length, fg_progress_t *out)
     out->escapes = get_u32(data + 8);
     for (unsigned i = 0; i < FISH_ENTRY_MAX; ++i) {
         out->counts[i] = get_u16(data + 12 + 2 * i);
+    }
+    if (data[2] == 1U) {
+        out->points = FG_DAILY_POINTS;
+        out->day_ms = 0;
+    } else {
+        out->points = get_u32(data + FISH_SAVE_V1_SIZE);
+        out->day_ms = get_u32(data + FISH_SAVE_V1_SIZE + 4);
     }
     return true;
 }

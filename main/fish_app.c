@@ -168,13 +168,15 @@ static void app_task(void *arg)
 {
     fg_progress_t saved;
     uint32_t now = now_ms();
+    bool loaded = fish_store_load(&saved);
 
     (void)arg;
-    if (fish_store_load(&saved)) {
-        ESP_LOGI(TAG, "读取存档：抛竿 %lu 次，已收集 %u/%u", (unsigned long)saved.casts,
-                 (unsigned)fish_game_collected(&saved), (unsigned)FISH_ENTRY_COUNT);
+    if (loaded) {
+        ESP_LOGI(TAG, "读取存档：抛竿 %lu 次，已收集 %u/%u，积分 %lu", (unsigned long)saved.casts,
+                 (unsigned)fish_game_collected(&saved), (unsigned)FISH_ENTRY_COUNT,
+                 (unsigned long)saved.points);
     }
-    fish_game_init(&s_game, &saved, esp_random(), now);
+    fish_game_init(&s_game, loaded ? &saved : NULL, esp_random(), now);
     read_battery(now);
     if (bsp_lvgl_lock(LVGL_LOCK_MS * 2)) {
         fish_ui_render(&s_game, now, s_battery);
