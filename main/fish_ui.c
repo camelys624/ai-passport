@@ -499,7 +499,7 @@ static lv_obj_t *render_album(const fish_game_t *game, int battery)
     uint16_t stock = game->progress.stock[index];
     bool known = count > 0;
     char text[48];
-    char body[48];
+    char body[64];
     lv_obj_t *scr;
 
     snprintf(text, sizeof(text), "积分 %lu", (unsigned long)game->progress.points);
