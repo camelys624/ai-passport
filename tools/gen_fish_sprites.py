@@ -287,7 +287,34 @@ def lure() -> Canvas:
     return c
 
 
-BAIT_ART = {"蚯蚓": worm, "面团": dough, "亮片": lure}
+def _tomato(c: Canvas, cx: float, cy: float, a: float, b: float) -> None:
+    """Red tomato body with a highlight, a green calyx and a stem; outline afterwards."""
+    c.ellipse(cx, cy, a, b, "R")
+    top = round(cy - b)
+    hx = round(cx - a / 2)
+    c.set(hx, top + 2, "W"); c.set(hx, top + 3, "W"); c.set(hx + 1, top + 1, "W")
+    x = round(cx - 0.5)
+    for dx, dy in ((-2, 0), (-1, 0), (0, 0), (1, 0), (2, 0), (-1, -1), (1, -1)):
+        c.set(x + dx, top + dy, "G")
+    c.set(x, top - 1, "E"); c.set(x, top - 2, "E")
+
+
+def one_tomato() -> Canvas:
+    c = Canvas(16, 16)
+    _tomato(c, 8.0, 9.5, 6.0, 5.0)
+    c.outline()
+    return c
+
+
+def two_tomatoes() -> Canvas:
+    c = Canvas(16, 16)
+    _tomato(c, 4.0, 11.0, 3.0, 3.0)
+    _tomato(c, 12.0, 8.5, 3.0, 3.0)
+    c.outline()
+    return c
+
+
+BAIT_ART = {"蚯蚓": worm, "面团": dough, "亮片": lure, "一个番茄": one_tomato, "两个番茄": two_tomatoes}
 
 
 # ---------------------------------------------------------------------------

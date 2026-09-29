@@ -25,8 +25,8 @@ Used by the Pocket Fishing firmware (`main/CMakeLists.txt` compiles them;
 
 | File | Size / bpp | Source weight | Coverage | Flash (.rodata) |
 | --- | --- | --- | --- | ---: |
-| [`fonts/fish_font_16.c`](fonts/fish_font_16.c) | 16 px / 4 | Regular | ASCII, punctuation, every UI string | 40,395 B |
-| [`fonts/fish_font_24.c`](fonts/fish_font_24.c) | 24 px / 4 | Medium | ASCII, punctuation, every UI string | 83,677 B |
+| [`fonts/fish_font_16.c`](fonts/fish_font_16.c) | 16 px / 4 | Regular | ASCII, punctuation, every UI string | 44,972 B |
+| [`fonts/fish_font_24.c`](fonts/fish_font_24.c) | 24 px / 4 | Medium | ASCII, punctuation, every UI string | 93,523 B |
 | [`fonts/fish_font_40.c`](fonts/fish_font_40.c) | 40 px / 4 | Medium | `FISH_LARGE_TEXT` only: reel prompt glyphs and the bite headline | 4,315 B |
 
 - Source: Noto Sans SC 2.004, `Sans/SubsetOTF/SC/NotoSansSC-Regular.otf` (SHA-256

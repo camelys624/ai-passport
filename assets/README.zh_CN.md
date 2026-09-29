@@ -22,8 +22,8 @@ Montserrat 回退只用于 `LV_SYMBOL_*` 电池图标）。
 
 | 文件 | 字号 / bpp | 源字重 | 覆盖范围 | Flash（.rodata） |
 | --- | --- | --- | --- | ---: |
-| [`fonts/fish_font_16.c`](fonts/fish_font_16.c) | 16 px / 4 | Regular | ASCII、标点、全部界面文字 | 40,395 B |
-| [`fonts/fish_font_24.c`](fonts/fish_font_24.c) | 24 px / 4 | Medium | ASCII、标点、全部界面文字 | 83,677 B |
+| [`fonts/fish_font_16.c`](fonts/fish_font_16.c) | 16 px / 4 | Regular | ASCII、标点、全部界面文字 | 44,972 B |
+| [`fonts/fish_font_24.c`](fonts/fish_font_24.c) | 24 px / 4 | Medium | ASCII、标点、全部界面文字 | 93,523 B |
 | [`fonts/fish_font_40.c`](fonts/fish_font_40.c) | 40 px / 4 | Medium | 仅 `FISH_LARGE_TEXT`（`▲▼OK咬钩了！`） | 4,315 B |
 
 - 来源：Noto Sans SC 2.004，`Sans/SubsetOTF/SC/NotoSansSC-Regular.otf`（SHA-256

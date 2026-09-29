@@ -31,6 +31,40 @@ static uint32_t cast_until_bite(fish_game_t *g, uint32_t now)
     return bite;
 }
 
+static uint8_t bait_named(const char *name)
+{
+    for (uint8_t i = 0; i < FISH_BAIT_COUNT; ++i) {
+        if (strcmp(FISH_BAITS[i].name, name) == 0) {
+            return i;
+        }
+    }
+    CHECK(!"bait not in catalog");
+    return 0;
+}
+
+// 该饵料钓到稀有渔获的概率。
+static double rare_share(uint8_t bait)
+{
+    uint32_t total = 0, rare = 0;
+    for (int i = 0; i < FISH_ENTRY_COUNT; ++i) {
+        total += FISH_ENTRIES[i].weight[bait];
+        rare += FISH_ENTRIES[i].rarity == FISH_RARITY_RARE ? FISH_ENTRIES[i].weight[bait] : 0U;
+    }
+    return (double)rare / total;
+}
+
+// 该饵料每一竿渔获的期望卖价。
+static double expected_price(uint8_t bait)
+{
+    uint32_t total = 0;
+    double value = 0;
+    for (int i = 0; i < FISH_ENTRY_COUNT; ++i) {
+        total += FISH_ENTRIES[i].weight[bait];
+        value += (double)FISH_ENTRIES[i].weight[bait] * FISH_ENTRIES[i].price;
+    }
+    return value / total;
+}
+
 static void test_draw_follows_bait_weights(void)
 {
     enum { DRAWS = 200000 };
@@ -68,7 +102,7 @@ static void test_wait_stays_in_bait_range(void)
             hi = w > hi ? w : hi;
         }
         CHECK(lo >= FISH_BAITS[bait].wait_min_ms && hi <= FISH_BAITS[bait].wait_max_ms);
-        CHECK(hi - lo > (FISH_BAITS[bait].wait_max_ms - FISH_BAITS[bait].wait_min_ms) * 9 / 10);
+        CHECK(hi - lo >= (FISH_BAITS[bait].wait_max_ms - FISH_BAITS[bait].wait_min_ms) * 9 / 10);
     }
 }
 
@@ -90,15 +124,17 @@ static void test_catalog_is_playable(void)
 static void test_bait_selection_and_cast(void)
 {
     fish_game_t g;
-    fg_progress_t saved = {.bait = 2, .points = 100};
+    fg_progress_t saved = {.bait = FISH_BAIT_COUNT - 1, .points = 100};
     fish_game_init(&g, &saved, 7, 1000);
-    CHECK(g.progress.bait == 2);
+    CHECK(g.progress.bait == FISH_BAIT_COUNT - 1);
 
+    // ▼ 从最后一种循环到第一种，▲ 再循环回来。
     CHECK(fish_game_input(&g, FG_KEY_DOWN, FG_INPUT_PRESS, 1000) == FG_FX_UPDATE);
     CHECK(g.progress.bait == 0);
     CHECK(fish_game_input(&g, FG_KEY_UP, FG_INPUT_PRESS, 1000) == FG_FX_UPDATE);
-    CHECK(g.progress.bait == 2);
-    fish_game_input(&g, FG_KEY_UP, FG_INPUT_PRESS, 1000);
+    CHECK(g.progress.bait == FISH_BAIT_COUNT - 1);
+    fish_game_input(&g, FG_KEY_DOWN, FG_INPUT_PRESS, 1000);
+    fish_game_input(&g, FG_KEY_DOWN, FG_INPUT_PRESS, 1000);
     CHECK(g.progress.bait == 1);
 
     CHECK(tap(&g, FG_KEY_OK, 2000) == (FG_FX_REDRAW | FG_FX_SAVE));
@@ -193,13 +229,108 @@ static void test_bite_wakes_beeps_and_escapes(void)
     CHECK(fish_game_tick(&g, bite + 2 * FG_BITE_BEEP_INTERVAL_MS) == FG_FX_SOUND_BITE);
     // 咬钩期间 UP/DOWN 不算提竿。
     CHECK(fish_game_input(&g, FG_KEY_UP, FG_INPUT_PRESS, bite + 5000) == 0);
-    CHECK(fish_game_tick(&g, bite + FG_BITE_WINDOW_MS - 1) == 0);
+    CHECK(fish_game_tick(&g, bite + FISH_BAITS[0].bite_ms - 1) == 0);
 
-    fx = fish_game_tick(&g, bite + FG_BITE_WINDOW_MS);
+    fx = fish_game_tick(&g, bite + FISH_BAITS[0].bite_ms);
     CHECK(fx == (FG_FX_REDRAW | FG_FX_SOUND_ESCAPE | FG_FX_SAVE));
     CHECK(g.view == FG_VIEW_RESULT && g.outcome == FG_OUTCOME_MISSED);
     CHECK(g.progress.escapes == 1);
     CHECK(fish_game_collected(&g.progress) == 0);
+}
+
+// 番茄饵料：积分为 0 也能抛且不扣分；专注满固定时长（30 / 60 分钟）才咬钩，并在咬钩时记入番茄数；
+// 咬钩后 60 秒内按 OK 直接收鱼，不收线；没提竿只丢鱼，番茄仍算完成。
+static void test_tomato_baits_fixed_focus(void)
+{
+    static const struct {
+        const char *name;
+        uint32_t focus_ms;
+        uint32_t tomatoes;
+    } TOMATOES[] = {{"一个番茄", 30U * 60U * 1000U, 1}, {"两个番茄", 60U * 60U * 1000U, 2}};
+
+    for (size_t t = 0; t < sizeof(TOMATOES) / sizeof(TOMATOES[0]); ++t) {
+        fish_game_t g;
+        fg_progress_t saved = {.bait = bait_named(TOMATOES[t].name), .points = 0, .tomatoes = 5,
+                               .focus_streak = 3};
+        fish_game_init(&g, &saved, 7, 1000);
+
+        CHECK(tap(&g, FG_KEY_OK, 1000) == (FG_FX_REDRAW | FG_FX_SAVE));
+        CHECK(g.view == FG_VIEW_WAITING && !g.short_points);
+        CHECK(g.progress.points == 0 && g.progress.casts == 1);
+
+        uint32_t bite = 1000 + TOMATOES[t].focus_ms;
+        // 黑屏后应用任务一直睡到专注结束，中途不需要醒来。
+        CHECK(fish_game_tick(&g, 1000 + FG_WAIT_DIM_MS) == FG_FX_SCREEN_OFF);
+        CHECK(fish_game_ms_until_next(&g, 1000 + FG_WAIT_DIM_MS) == TOMATOES[t].focus_ms - FG_WAIT_DIM_MS);
+        fish_game_tick(&g, bite - 1);
+        CHECK(g.view == FG_VIEW_WAITING && g.progress.tomatoes == 5);
+        CHECK(fish_game_tick(&g, bite) == (FG_FX_REDRAW | FG_FX_SOUND_BITE | FG_FX_SCREEN_ON | FG_FX_SAVE));
+        CHECK(g.view == FG_VIEW_BITE);
+        CHECK(g.progress.tomatoes == 5 + TOMATOES[t].tomatoes);
+        CHECK(g.progress.focus_streak == 3 + TOMATOES[t].tomatoes);
+
+        // 第 59 秒按 OK 仍然来得及，直接收鱼、不进收线。
+        fish_game_t late = g;
+        fish_game_tick(&late, bite + 59000);
+        CHECK(late.view == FG_VIEW_BITE);
+        uint32_t fx = fish_game_input(&late, FG_KEY_OK, FG_INPUT_PRESS, bite + 59000);
+        CHECK(fx == (FG_FX_REDRAW | FG_FX_SOUND_CATCH | FG_FX_SAVE));
+        CHECK(late.view == FG_VIEW_RESULT && late.outcome == FG_OUTCOME_CAUGHT);
+        CHECK(late.progress.counts[late.entry] == 1);
+        CHECK(late.progress.tomatoes == 5 + TOMATOES[t].tomatoes);
+
+        // 满 60 秒没提竿才跑鱼；专注记录保留。
+        fish_game_tick(&g, bite + 60000U - 1U);
+        CHECK(g.view == FG_VIEW_BITE);
+        fish_game_tick(&g, bite + 60000U);
+        CHECK(g.view == FG_VIEW_RESULT && g.outcome == FG_OUTCOME_MISSED);
+        CHECK(g.progress.tomatoes == 5 + TOMATOES[t].tomatoes);
+        CHECK(g.progress.focus_streak == 3 + TOMATOES[t].tomatoes);
+    }
+}
+
+// 番茄饵料中途长按 OK：放弃专注，进入结果页，放弃次数 +1、连续记录清零、累计番茄不变；
+// 普通饵料长按仍是直接收竿回准备页，不算放弃。
+static void test_quit_focus_resets_streak(void)
+{
+    fish_game_t g;
+    fg_progress_t saved = {.bait = bait_named("一个番茄"), .tomatoes = 7, .focus_streak = 4, .focus_quits = 1};
+    fish_game_init(&g, &saved, 7, 0);
+    tap(&g, FG_KEY_OK, 0);
+    CHECK(g.view == FG_VIEW_WAITING);
+
+    fish_game_input(&g, FG_KEY_OK, FG_INPUT_PRESS, 12U * 60U * 1000U);
+    uint32_t fx = fish_game_input(&g, FG_KEY_OK, FG_INPUT_LONG, 12U * 60U * 1000U);
+    CHECK(fx == (FG_FX_REDRAW | FG_FX_SOUND_ESCAPE | FG_FX_SAVE));
+    CHECK(g.view == FG_VIEW_RESULT && g.outcome == FG_OUTCOME_QUIT);
+    CHECK(g.focused_ms == 12U * 60U * 1000U);
+    CHECK(g.progress.focus_streak == 0 && g.progress.focus_quits == 2);
+    CHECK(g.progress.tomatoes == 7 && g.progress.escapes == 0);
+    // 放弃后原定的专注时间到了也不会咬钩、不会补记番茄。
+    fish_game_tick(&g, 31U * 60U * 1000U);
+    CHECK(g.view == FG_VIEW_RESULT && g.progress.tomatoes == 7);
+
+    fish_game_t worm;
+    fg_progress_t worm_saved = {.bait = bait_named("蚯蚓"), .points = 100, .focus_streak = 4};
+    fish_game_init(&worm, &worm_saved, 7, 0);
+    tap(&worm, FG_KEY_OK, 0);
+    fish_game_input(&worm, FG_KEY_OK, FG_INPUT_PRESS, 1000);
+    CHECK(fish_game_input(&worm, FG_KEY_OK, FG_INPUT_LONG, 1000) == FG_FX_REDRAW);
+    CHECK(worm.view == FG_VIEW_READY);
+    CHECK(worm.progress.focus_streak == 4 && worm.progress.focus_quits == 0);
+}
+
+// 专注越久奖励越好：番茄饵料的稀有渔获比例高于蚯蚓、面团，两个番茄又高于一个番茄；
+// 两个番茄每一竿的期望卖价不少于一个番茄的两倍，专注一小时不比连续两个半小时吃亏。
+static void test_tomato_rewards_grow_with_focus(void)
+{
+    uint8_t one = bait_named("一个番茄");
+    uint8_t two = bait_named("两个番茄");
+
+    CHECK(rare_share(one) > rare_share(bait_named("蚯蚓")));
+    CHECK(rare_share(one) > rare_share(bait_named("面团")));
+    CHECK(rare_share(two) > rare_share(one));
+    CHECK(expected_price(two) >= 2.0 * expected_price(one));
 }
 
 static void test_reel_success_records_catch(void)
@@ -333,11 +464,11 @@ static void test_points_gate_cast(void)
     CHECK(g.view == FG_VIEW_READY && g.short_points);
     CHECK(g.progress.points == 19 && g.progress.casts == 0);
 
-    // 换饵清掉提示；蚯蚓 5 积分可以抛。
-    fish_game_input(&g, FG_KEY_DOWN, FG_INPUT_PRESS, 200);
-    CHECK(g.progress.bait == 0 && !g.short_points);
+    // 换饵清掉提示；面团 10 积分可以抛。
+    fish_game_input(&g, FG_KEY_UP, FG_INPUT_PRESS, 200);
+    CHECK(g.progress.bait == 1 && !g.short_points);
     tap(&g, FG_KEY_OK, 300);
-    CHECK(g.view == FG_VIEW_WAITING && g.progress.points == 14);
+    CHECK(g.view == FG_VIEW_WAITING && g.progress.points == 9);
 }
 
 static void test_catch_goes_to_stock_not_points(void)
@@ -456,7 +587,8 @@ static void test_timer_wraparound(void)
 
 static void test_save_roundtrip_and_rejects(void)
 {
-    fg_progress_t p = {.bait = 2, .casts = 70000, .escapes = 12, .points = 123456};
+    fg_progress_t p = {.bait = 2, .casts = 70000, .escapes = 12, .points = 123456, .tomatoes = 300,
+                       .focus_streak = 9, .focus_quits = UINT32_MAX};
     p.counts[0] = 3;
     p.counts[FISH_ENTRY_MAX - 1] = 65535;
     p.stock[0] = 2;
@@ -471,6 +603,7 @@ static void test_save_roundtrip_and_rejects(void)
     CHECK(q.points == 123456);
     CHECK(memcmp(q.counts, p.counts, sizeof(p.counts)) == 0);
     CHECK(memcmp(q.stock, p.stock, sizeof(p.stock)) == 0);
+    CHECK(q.tomatoes == 300 && q.focus_streak == 9 && q.focus_quits == UINT32_MAX);
 
     fg_progress_t untouched = q;
     CHECK(!fish_save_decode(buf, sizeof(buf) - 1, &q));
@@ -482,8 +615,15 @@ static void test_save_roundtrip_and_rejects(void)
     CHECK(!fish_save_decode(NULL, FISH_SAVE_SIZE, &q));
     CHECK(memcmp(&q, &untouched, sizeof(q)) == 0);
 
-    // 版本 1 存档：保留鱼册，积分从每日赠送量开始，鱼篓为空。
+    // 版本 2 存档（升级前的设备）：积分、鱼篓照旧，专注记录从 0 开始。
     buf[0] = 'F';
+    buf[2] = 2;
+    CHECK(!fish_save_decode(buf, FISH_SAVE_SIZE, &q));
+    CHECK(fish_save_decode(buf, FISH_SAVE_V2_SIZE, &q));
+    CHECK(q.points == 123456 && q.stock[FISH_ENTRY_MAX - 1] == 65534);
+    CHECK(q.tomatoes == 0 && q.focus_streak == 0 && q.focus_quits == 0);
+
+    // 版本 1 存档：保留鱼册，积分从每日赠送量开始，鱼篓为空。
     buf[2] = 1;
     CHECK(!fish_save_decode(buf, FISH_SAVE_SIZE, &q));
     CHECK(fish_save_decode(buf, FISH_SAVE_V1_SIZE, &q));
@@ -500,6 +640,9 @@ int main(void)
     test_click_needs_press_in_same_view();
     test_waiting_dims_and_first_press_only_wakes();
     test_bite_wakes_beeps_and_escapes();
+    test_tomato_baits_fixed_focus();
+    test_tomato_rewards_grow_with_focus();
+    test_quit_focus_resets_streak();
     test_reel_success_records_catch();
     test_reel_run_hint();
     test_reel_failures();

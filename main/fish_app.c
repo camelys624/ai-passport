@@ -112,10 +112,20 @@ static void apply(uint32_t fx, uint32_t now, bool periodic)
     bool refresh;
 
     play_sounds(fx);
-    if (fx & (FG_FX_SOUND_CATCH | FG_FX_SOUND_ESCAPE)) {
+    // 鱼册卖鱼也会播放收获音，只在结果页记录本竿结果。
+    if ((fx & (FG_FX_SOUND_CATCH | FG_FX_SOUND_ESCAPE)) && s_game.view == FG_VIEW_RESULT) {
         static const char *const REASONS[] = {"钓到", "没提竿", "按错键", "收线太慢"};
-        ESP_LOGI(TAG, "结果：%s %s（累计 %u）", REASONS[s_game.outcome],
-                 FISH_ENTRIES[s_game.entry].name, (unsigned)s_game.progress.counts[s_game.entry]);
+        if (s_game.outcome == FG_OUTCOME_QUIT) {
+            ESP_LOGI(TAG, "放弃专注：已专注 %lu 秒（累计放弃 %lu 次）",
+                     (unsigned long)(s_game.focused_ms / 1000U), (unsigned long)s_game.progress.focus_quits);
+        } else {
+            ESP_LOGI(TAG, "结果：%s %s（累计 %u）", REASONS[s_game.outcome],
+                     FISH_ENTRIES[s_game.entry].name, (unsigned)s_game.progress.counts[s_game.entry]);
+        }
+    }
+    if ((fx & FG_FX_SAVE) && s_game.view == FG_VIEW_BITE && FISH_BAITS[s_game.progress.bait].tomatoes > 0) {
+        ESP_LOGI(TAG, "专注完成：累计 %lu 个番茄，连续 %lu", (unsigned long)s_game.progress.tomatoes,
+                 (unsigned long)s_game.progress.focus_streak);
     }
     if (fx & FG_FX_SAVE) {
         (void)fish_store_save(&s_game.progress);

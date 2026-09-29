@@ -41,6 +41,9 @@ void fish_save_encode(const fg_progress_t *progress, uint8_t out[FISH_SAVE_SIZE]
     for (unsigned i = 0; i < FISH_ENTRY_MAX; ++i) {
         put_u16(out + FISH_SAVE_V1_SIZE + 4 + 2 * i, progress->stock[i]);
     }
+    put_u32(out + FISH_SAVE_V2_SIZE, progress->tomatoes);
+    put_u32(out + FISH_SAVE_V2_SIZE + 4, progress->focus_streak);
+    put_u32(out + FISH_SAVE_V2_SIZE + 8, progress->focus_quits);
 }
 
 bool fish_save_decode(const uint8_t *data, size_t length, fg_progress_t *out)
@@ -48,7 +51,7 @@ bool fish_save_decode(const uint8_t *data, size_t length, fg_progress_t *out)
     if (data == NULL || length < 3 || data[0] != 'F' || data[1] != 'S') {
         return false;
     }
-    if (!(data[2] == 1U && length == FISH_SAVE_V1_SIZE) &&
+    if (!(data[2] == 1U && length == FISH_SAVE_V1_SIZE) && !(data[2] == 2U && length == FISH_SAVE_V2_SIZE) &&
         !(data[2] == FISH_SAVE_VERSION && length == FISH_SAVE_SIZE)) {
         return false;
     }
@@ -66,6 +69,15 @@ bool fish_save_decode(const uint8_t *data, size_t length, fg_progress_t *out)
         for (unsigned i = 0; i < FISH_ENTRY_MAX; ++i) {
             out->stock[i] = get_u16(data + FISH_SAVE_V1_SIZE + 4 + 2 * i);
         }
+    }
+    if (data[2] == FISH_SAVE_VERSION) {
+        out->tomatoes = get_u32(data + FISH_SAVE_V2_SIZE);
+        out->focus_streak = get_u32(data + FISH_SAVE_V2_SIZE + 4);
+        out->focus_quits = get_u32(data + FISH_SAVE_V2_SIZE + 8);
+    } else {
+        out->tomatoes = 0;
+        out->focus_streak = 0;
+        out->focus_quits = 0;
     }
     return true;
 }

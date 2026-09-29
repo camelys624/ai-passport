@@ -7,14 +7,17 @@
 //   像素图：tools/gen_fish_sprites.py 按 name 查找画法（CATCH_ART / BAIT_ART），
 //           新名字没有对应画法时构建失败。
 // 概率 = 该项在当前饵料下的权重 / 当前饵料下所有项的权重之和；权重 0 = 这种饵料钓不到它。
-// 积分：抛竿时扣除饵料的 cost；渔获在鱼册里按 price 卖出换积分（水草、旧靴子为 0，不能卖）。
+// 积分：抛竿时扣除饵料的 cost（0 = 免费）；渔获在鱼册里按 price 卖出换积分（水草、旧靴子为 0，不能卖）。
+// 番茄饵料（tomatoes > 0）：固定的专注时长（wait_min_ms == wait_max_ms），等待页显示倒计时；
+// 专注满时长即记为完成 tomatoes 个番茄；咬钩窗口更长，按 OK 直接收鱼、不用收线；
+// 中途收竿算放弃专注，连续记录清零。
 // desc 显示在 176 px 宽的卡片里，16 px 字每行最多 11 个汉字：用 "\n" 手动断成两行，
 // 避免标点被挤到单独一行。新增的文字需要重新运行 tools/gen_fish_fonts.py。
 #pragma once
 
 #include <stdint.h>
 
-#define FISH_BAIT_COUNT 3
+#define FISH_BAIT_COUNT 5
 #define FISH_ENTRY_COUNT 10
 #define FISH_ENTRY_MAX 32
 
@@ -35,6 +38,8 @@ typedef struct {
     uint16_t cost;         // 每抛一竿消耗的积分
     uint32_t wait_min_ms;  // 抛竿到咬钩的随机等待区间（含两端）
     uint32_t wait_max_ms;
+    uint32_t bite_ms;      // 咬钩后多久内必须按 OK 提竿，超时鱼跑掉
+    uint8_t tomatoes;      // 番茄钟饵料：专注满时长算完成几个番茄；0 = 普通饵料
 } fish_bait_t;
 
 typedef struct {

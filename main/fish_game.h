@@ -1,7 +1,8 @@
 // main/fish_game.h — 钓鱼玩法状态机（纯 C，不依赖 ESP-IDF/LVGL，可在主机上测试）。
 //
-// 流程：准备（选饵）→ 等待（可黑屏）→ 咬钩（滴声 + 亮屏，限时提竿）→ 收线（按提示逐键）
+// 流程：准备（选饵）→ 等待（可黑屏）→ 咬钩（滴声 + 亮屏，在饵料的 bite_ms 内提竿）→ 收线（按提示逐键）
 //       → 结果（钓到 / 跑掉）→ 准备。准备页长按 OK 进入鱼册。
+// 番茄饵料：咬钩后按 OK 直接收鱼，跳过收线；等待中长按 OK 收竿 = 放弃专注，进入结果页。
 //
 // 输入约定（与 bsp_btn_ev_t 对应）：
 //   PRESS  按下瞬间，用于换饵、提竿、收线、结果页继续、鱼册翻页与选卖出数量等需要即时响应、
@@ -9,7 +10,7 @@
 //          不依赖 CLICK。
 //   CLICK  抬起后确认的单击（双击也按单击处理），用于准备页抛竿、鱼册卖鱼——同一个 OK
 //          长按要进出鱼册。
-//   LONG   长按，用于进出鱼册、取消卖出、等待中收竿。
+//   LONG   长按，用于进出鱼册、取消卖出、等待中收竿（番茄饵料为放弃专注）。
 // CLICK/LONG 只有在“当前页面收到过同一键的 PRESS”时才生效：上一页最后一次按键的
 // 抬起事件不会穿透到新页面。结果页出现后需要先停手 FG_RESULT_GUARD_MS（期间每次按键
 // 都重新计时），再按 OK 才继续，连按收线时不会把结果页直接跳过。
@@ -18,8 +19,11 @@
 // 黑屏时的第一次按下只用于亮屏，不触发任何玩法动作。
 //
 // 积分：新存档送 FG_DAILY_POINTS；之后按开机时间，每运行满 FG_DAY_MS 再送一次（重启从头计）。
-// 抛竿扣饵料积分，积分不够时不能抛竿。钓到的渔获记入鱼册，能卖的（price > 0）同时放进
+// 抛竿扣饵料积分（番茄饵料免费），积分不够时不能抛竿。钓到的渔获记入鱼册，能卖的（price > 0）同时放进
 // 鱼篓（stock）；在鱼册里 OK 选中卖出，▲▼ 选数量，OK 确认卖出换积分，长按 OK 取消/退出。
+//
+// 专注记录：番茄饵料专注满时长（咬钩那一刻）即计入 tomatoes 与 focus_streak，之后提竿成败都不影响；
+// 中途收竿计入 focus_quits，focus_streak 清零。设备没有日历时钟，记录为累计值。
 //
 // 所有时间参数为单调毫秒计数，允许 uint32_t 回绕。
 #pragma once
@@ -29,7 +33,6 @@
 
 #include "fish_catalog.h"
 
-#define FG_BITE_WINDOW_MS 6000U
 #define FG_BITE_BEEP_INTERVAL_MS 2000U
 #define FG_REEL_STEP_MS 2000U
 #define FG_WAIT_DIM_MS 5000U
@@ -68,6 +71,7 @@ typedef enum {
     FG_OUTCOME_MISSED,     // 咬钩后没有及时提竿
     FG_OUTCOME_WRONG_KEY,  // 收线时按错键
     FG_OUTCOME_TOO_SLOW,   // 收线某一步超时
+    FG_OUTCOME_QUIT,       // 番茄饵料：专注中途收竿
 } fg_outcome_t;
 
 // fish_game_input()/fish_game_tick() 返回的副作用请求（位掩码），由应用层执行。
@@ -90,6 +94,9 @@ typedef struct {
     uint32_t casts;                     // 累计抛竿次数
     uint32_t escapes;                   // 累计跑鱼次数
     uint16_t counts[FISH_ENTRY_MAX];    // 每种渔获的累计数量（鱼册收集记录，卖掉不减）
+    uint32_t tomatoes;                  // 累计完成的番茄数
+    uint32_t focus_streak;              // 连续完成的番茄数，放弃专注时清零
+    uint32_t focus_quits;               // 累计放弃专注的次数
 } fg_progress_t;
 
 typedef struct {
@@ -108,6 +115,7 @@ typedef struct {
     uint8_t step_index;
     fg_outcome_t outcome;
     uint32_t result_ms;        // 结果页安静期起点：进入时刻，或安静期内最后一次按键
+    uint32_t focused_ms;       // 放弃专注时已经专注的时长
     uint8_t album_index;
     uint16_t sell_qty;         // 鱼册：正在选的卖出数量；0 = 翻页状态
     uint8_t armed;             // 当前页面收到过 PRESS 的键（位掩码）

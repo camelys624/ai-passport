@@ -110,9 +110,14 @@ static uint32_t enter(fish_game_t *game, fg_view_t view)
     return FG_FX_REDRAW;
 }
 
+static void add_u32(uint32_t *value, uint32_t n)
+{
+    *value = *value > UINT32_MAX - n ? UINT32_MAX : *value + n;
+}
+
 static void add_points(fg_progress_t *p, uint32_t points)
 {
-    p->points = p->points > UINT32_MAX - points ? UINT32_MAX : p->points + points;
+    add_u32(&p->points, points);
 }
 
 static uint32_t finish(fish_game_t *game, fg_outcome_t outcome, uint32_t now_ms)
@@ -134,6 +139,17 @@ static uint32_t finish(fish_game_t *game, fg_outcome_t outcome, uint32_t now_ms)
     if (game->progress.escapes < UINT32_MAX) {
         game->progress.escapes++;
     }
+    return enter(game, FG_VIEW_RESULT) | FG_FX_SOUND_ESCAPE | FG_FX_SAVE;
+}
+
+// 番茄饵料中途收竿：记一次放弃，连续记录清零；饵料免费，没有积分要退。
+static uint32_t quit_focus(fish_game_t *game, uint32_t now_ms)
+{
+    game->outcome = FG_OUTCOME_QUIT;
+    game->result_ms = now_ms;
+    game->focused_ms = now_ms - game->cast_ms;
+    game->progress.focus_streak = 0;
+    add_u32(&game->progress.focus_quits, 1);
     return enter(game, FG_VIEW_RESULT) | FG_FX_SOUND_ESCAPE | FG_FX_SAVE;
 }
 
@@ -203,7 +219,12 @@ static uint32_t on_press(fish_game_t *game, fg_key_t key, uint32_t now_ms)
         }
         return 0;
     case FG_VIEW_BITE:
-        return key == FG_KEY_OK ? start_reel(game, now_ms) : 0;
+        if (key != FG_KEY_OK) {
+            return 0;
+        }
+        // 番茄饵料专注已经够久，提竿直接收鱼，不再收线。
+        return FISH_BAITS[game->progress.bait].tomatoes > 0 ? finish(game, FG_OUTCOME_CAUGHT, now_ms)
+                                                            : start_reel(game, now_ms);
     case FG_VIEW_REEL:
         return reel_press(game, key, now_ms);
     case FG_VIEW_RESULT:
@@ -273,7 +294,7 @@ static uint32_t on_click(fish_game_t *game, fg_key_t key, uint32_t now_ms)
     }
 }
 
-static uint32_t on_long(fish_game_t *game, fg_key_t key)
+static uint32_t on_long(fish_game_t *game, fg_key_t key, uint32_t now_ms)
 {
     if (key != FG_KEY_OK) {
         return 0;
@@ -283,6 +304,9 @@ static uint32_t on_long(fish_game_t *game, fg_key_t key)
         game->album_index = 0;
         return enter(game, FG_VIEW_ALBUM);
     case FG_VIEW_WAITING:
+        if (FISH_BAITS[game->progress.bait].tomatoes > 0) {
+            return quit_focus(game, now_ms);
+        }
         // 收竿：饵料已消耗，不退积分；抛竿时已保存。
         return enter(game, FG_VIEW_READY);
     case FG_VIEW_ALBUM:
@@ -319,7 +343,7 @@ uint32_t fish_game_input(fish_game_t *game, fg_key_t key, fg_input_t input, uint
     if ((game->armed & (1U << key)) == 0) {
         return 0;
     }
-    return input == FG_INPUT_CLICK ? on_click(game, key, now_ms) : on_long(game, key);
+    return input == FG_INPUT_CLICK ? on_click(game, key, now_ms) : on_long(game, key, now_ms);
 }
 
 static uint32_t dim_limit(const fish_game_t *game)
@@ -357,10 +381,16 @@ static uint32_t tick_play(fish_game_t *game, uint32_t now_ms)
     case FG_VIEW_WAITING:
         if (reached(now_ms, game->deadline_ms)) {
             game->entry = fish_game_draw(&game->rng, game->progress.bait);
-            game->deadline_ms = now_ms + FG_BITE_WINDOW_MS;
+            game->deadline_ms = now_ms + FISH_BAITS[game->progress.bait].bite_ms;
             game->next_beep_ms = now_ms + FG_BITE_BEEP_INTERVAL_MS;
             game->last_activity_ms = now_ms;
             fx |= enter(game, FG_VIEW_BITE) | FG_FX_SOUND_BITE;
+            // 番茄饵料专注满时长：此刻就算完成，之后提竿成败不影响专注记录。
+            if (FISH_BAITS[game->progress.bait].tomatoes > 0) {
+                add_u32(&game->progress.tomatoes, FISH_BAITS[game->progress.bait].tomatoes);
+                add_u32(&game->progress.focus_streak, FISH_BAITS[game->progress.bait].tomatoes);
+                fx |= FG_FX_SAVE;
+            }
             if (!game->screen_on) {
                 game->screen_on = true;
                 fx |= FG_FX_SCREEN_ON;

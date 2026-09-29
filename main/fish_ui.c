@@ -237,6 +237,12 @@ static uint32_t remaining(uint32_t now_ms, uint32_t deadline_ms)
     return (int32_t)(deadline_ms - now_ms) > 0 ? deadline_ms - now_ms : 0U;
 }
 
+// 番茄饵料：固定专注时长，等待页显示倒计时而不是已等时间；提竿直接收鱼。
+static bool focus_bait(const fish_bait_t *bait)
+{
+    return bait->tomatoes > 0;
+}
+
 // ---------------------------------------------------------------------------
 // 动画
 // ---------------------------------------------------------------------------
@@ -380,8 +386,9 @@ static lv_obj_t *render_ready(const fish_game_t *game, int battery)
 
 static lv_obj_t *render_waiting(const fish_game_t *game, int battery)
 {
+    bool focus = focus_bait(&FISH_BAITS[game->progress.bait]);
     char text[32];
-    lv_obj_t *scr = scene("等待中", battery);
+    lv_obj_t *scr = scene(focus ? "专注中" : "等待中", battery);
     lv_obj_t *bob;
 
     lv_obj_align(ring(scr, 34, LV_OPA_50), LV_ALIGN_TOP_LEFT, 59, WATER_Y - 3);
@@ -394,13 +401,14 @@ static lv_obj_t *render_waiting(const fish_game_t *game, int battery)
     snprintf(text, sizeof(text), "饵料：%s", FISH_BAITS[game->progress.bait].name);
     line_text(scr, fish_font_body, C_MIST, 212, text);
     s_ui.elapsed = line_text(scr, fish_font_body, C_MIST, 234, "");
-    line_text(scr, fish_font_body, C_FOAM, 262, "去忙吧，咬钩会滴一声");
-    line_text(scr, fish_font_body, C_MIST, 290, "长按 OK 收竿");
+    line_text(scr, fish_font_body, C_FOAM, 262, focus ? "专心做事，到点会滴滴响" : "去忙吧，咬钩会滴一声");
+    line_text(scr, fish_font_body, C_MIST, 290, focus ? "长按 OK 放弃专注" : "长按 OK 收竿");
     return scr;
 }
 
-static lv_obj_t *render_bite(int battery)
+static lv_obj_t *render_bite(const fish_game_t *game, int battery)
 {
+    bool focus = focus_bait(&FISH_BAITS[game->progress.bait]);
     lv_obj_t *scr = scene("咬钩了", battery);
     lv_obj_t *splash = box(scr, 36, WATER_Y - 23, 80, 50, lv_color_hex(0), LV_OPA_TRANSP, 0);
 
@@ -410,9 +418,9 @@ static lv_obj_t *render_bite(int battery)
     polyline(scr, LINE_TAUT, 2, lv_color_hex(C_FOAM), 1, LV_OPA_90);
 
     line_text(scr, fish_font_large, C_ACCENT, 42, "咬钩了！");
-    line_text(scr, fish_font_title, C_FOAM, 186, "按 OK 提竿");
+    line_text(scr, fish_font_title, C_FOAM, 186, focus ? "按 OK 收鱼" : "按 OK 提竿");
     s_ui.bar = bar(scr, 232, 10);
-    line_text(scr, fish_font_body, C_MIST, 258, "晚了鱼就跑了");
+    line_text(scr, fish_font_body, C_MIST, 258, focus ? "专注完成！晚了鱼会跑" : "晚了鱼就跑了");
     return scr;
 }
 
@@ -451,18 +459,47 @@ static lv_obj_t *render_reel(const fish_game_t *game, int battery)
     return scr;
 }
 
+// 番茄饵料中途收竿：画出没用上的饵料，给出已专注时长与累计记录。
+static lv_obj_t *render_quit(const fish_game_t *game, int battery)
+{
+    char body[48];
+    char text[64];
+    lv_obj_t *scr = scene("放弃了", battery);
+    lv_obj_t *icon = lv_image_create(scr);
+
+    line_text(scr, fish_font_title, C_INK, 40, "鱼被吓跑了…");
+    lv_image_set_src(icon, &fish_img_baits[game->progress.bait]);
+    lv_obj_align(icon, LV_ALIGN_TOP_MID, 0, 88);
+    snprintf(body, sizeof(body), "专注了 %lu 分钟\n连续记录清零", (unsigned long)(game->focused_ms / 60000U));
+    card_texts(card(scr), "放弃专注", body);
+    snprintf(text, sizeof(text), "完成 %lu 个番茄 · 放弃 %lu 次", (unsigned long)game->progress.tomatoes,
+             (unsigned long)game->progress.focus_quits);
+    line_text(scr, fish_font_body, C_FOAM, 272, text);
+    line_text(scr, fish_font_body, C_MIST, 294, "OK 继续");
+    return scr;
+}
+
 static lv_obj_t *render_result(const fish_game_t *game, int battery)
 {
     const fish_entry_t *entry = &FISH_ENTRIES[game->entry];
-    char text[48];
+    const fish_bait_t *bait = &FISH_BAITS[game->progress.bait];
+    char text[64];
     lv_obj_t *scr;
 
+    if (game->outcome == FG_OUTCOME_QUIT) {
+        return render_quit(game, battery);
+    }
     if (game->outcome == FG_OUTCOME_CAUGHT) {
         scr = scene("钓到了", battery);
         rarity_chip(scr, entry, true);
         specimen(scr, 120, 104, game->entry, true);
         card_texts(card(scr), entry->name, entry->desc);
-        snprintf(text, sizeof(text), "第 %u 次收获", (unsigned)game->progress.counts[game->entry]);
+        if (focus_bait(bait)) {
+            snprintf(text, sizeof(text), "完成 %u 个番茄 · 连续 %lu", (unsigned)bait->tomatoes,
+                     (unsigned long)game->progress.focus_streak);
+        } else {
+            snprintf(text, sizeof(text), "第 %u 次收获", (unsigned)game->progress.counts[game->entry]);
+        }
         line_text(scr, fish_font_body, C_FOAM, 272, text);
         line_text(scr, fish_font_body, C_MIST, 294, "OK 继续");
         return scr;
@@ -474,7 +511,9 @@ static lv_obj_t *render_result(const fish_game_t *game, int battery)
 
     switch (game->outcome) {
     case FG_OUTCOME_MISSED:
-        snprintf(text, sizeof(text), "咬钩后 %u 秒内按 OK", (unsigned)(FG_BITE_WINDOW_MS / 1000U));
+        // 番茄饵料专注满时长就已记为完成，没提竿只丢了鱼。
+        snprintf(text, sizeof(text), "%s咬钩后 %u 秒内按 OK", focus_bait(bait) ? "番茄已记为完成\n" : "",
+                 (unsigned)(bait->bite_ms / 1000U));
         card_texts(card(scr), "没来得及提竿", text);
         break;
     case FG_OUTCOME_WRONG_KEY:
@@ -559,7 +598,7 @@ void fish_ui_render(const fish_game_t *game, uint32_t now_ms, int battery)
         scr = render_waiting(game, battery);
         break;
     case FG_VIEW_BITE:
-        scr = render_bite(battery);
+        scr = render_bite(game, battery);
         break;
     case FG_VIEW_REEL:
         scr = render_reel(game, battery);
@@ -589,8 +628,17 @@ static void refresh_ready(const fish_game_t *game)
     if (s_ui.bait_name == NULL) {
         return;
     }
-    lv_label_set_text_fmt(s_ui.points, "我的积分：%lu", (unsigned long)game->progress.points);
-    lv_label_set_text_fmt(s_ui.bait_index, "%u 积分/竿", (unsigned)bait->cost);
+    if (focus_bait(bait)) {
+        lv_label_set_text_fmt(s_ui.points, "已完成 %lu 个番茄 · 连续 %lu", (unsigned long)game->progress.tomatoes,
+                              (unsigned long)game->progress.focus_streak);
+    } else {
+        lv_label_set_text_fmt(s_ui.points, "我的积分：%lu", (unsigned long)game->progress.points);
+    }
+    if (bait->cost == 0) {
+        lv_label_set_text(s_ui.bait_index, "免费");
+    } else {
+        lv_label_set_text_fmt(s_ui.bait_index, "%u 积分/竿", (unsigned)bait->cost);
+    }
     lv_image_set_src(s_ui.bait_icon, &fish_img_baits[game->progress.bait]);
     lv_label_set_text(s_ui.bait_name, bait->name);
     if (game->short_points) {
@@ -674,13 +722,16 @@ void fish_ui_refresh(const fish_game_t *game, uint32_t now_ms, int battery)
         break;
     case FG_VIEW_WAITING:
         if (s_ui.elapsed != NULL) {
-            uint32_t seconds = (now_ms - game->cast_ms) / 1000U;
-            lv_label_set_text_fmt(s_ui.elapsed, "已等 %u:%02u", (unsigned)(seconds / 60U),
-                                  (unsigned)(seconds % 60U));
+            // 倒计时向上取整：刚抛竿显示 30:00，到 0:01 之后就咬钩。
+            bool focus = focus_bait(&FISH_BAITS[game->progress.bait]);
+            uint32_t seconds = focus ? (remaining(now_ms, game->deadline_ms) + 999U) / 1000U
+                                     : (now_ms - game->cast_ms) / 1000U;
+            lv_label_set_text_fmt(s_ui.elapsed, focus ? "还剩 %u:%02u" : "已等 %u:%02u",
+                                  (unsigned)(seconds / 60U), (unsigned)(seconds % 60U));
         }
         break;
     case FG_VIEW_BITE:
-        set_bar(remaining(now_ms, game->deadline_ms), FG_BITE_WINDOW_MS);
+        set_bar(remaining(now_ms, game->deadline_ms), FISH_BAITS[game->progress.bait].bite_ms);
         break;
     case FG_VIEW_REEL:
         refresh_reel(game, now_ms);
